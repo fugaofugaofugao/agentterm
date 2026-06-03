@@ -175,29 +175,31 @@
     if (terminal) { terminal.dispose(); terminal = null; fitAddon = null; }
   }
 
-  function setupTouchScroll(termElement) {
+  function setupTouchScroll(termElement, sendScroll) {
     var touchStartY = 0;
     var accumulated = 0;
+    var pendingLines = 0;
+    var scrollFrame = 0;
     var LINE_PX = 18;
+    var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 };
     var scrollHandle = null;
     var scrollThumb = null;
     function updateScrollThumb() {
-      if (!terminal || !scrollHandle || !scrollThumb) return;
-      var buffer = terminal.buffer.active;
-      var historySize = Math.max(0, buffer.baseY || 0);
-      var paneHeight = Math.max(0, terminal.rows || 0);
-      var scrollPosition = Math.max(0, historySize - (buffer.viewportY || 0));
+      if (!scrollHandle || !scrollThumb) return;
       var trackHeight = scrollHandle.clientHeight || 1;
-      var totalRows = Math.max(1, historySize + paneHeight);
-      var thumbHeight = Math.max(44, Math.min(140, Math.round(trackHeight * Math.max(0.08, Math.min(1, paneHeight / totalRows)))));
+      var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))));
       var maxTop = Math.max(0, trackHeight - thumbHeight);
-      var maxScroll = Math.max(1, historySize);
-      var ratio = 1 - Math.max(0, Math.min(1, scrollPosition / maxScroll));
+      var maxScroll = Math.max(1, scrollState.historySize);
+      var ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll));
       scrollThumb.style.height = thumbHeight + 'px';
       scrollThumb.style.transform = 'translateY(' + Math.round(maxTop * ratio) + 'px)';
-      scrollThumb.style.opacity = historySize > 0 ? '1' : '0.35';
     }
-    window.__agentTermUpdateScrollState = updateScrollThumb;
+    window.__agentTermUpdateScrollState = function(state) {
+      scrollState.scrollPosition = Number(state.scrollPosition || 0);
+      scrollState.historySize = Number(state.historySize || 0);
+      scrollState.paneHeight = Number(state.paneHeight || 0);
+      updateScrollThumb();
+    };
     var targets = [termElement];
     var viewport = termElement.querySelector('.xterm-viewport');
     var screen = termElement.querySelector('.xterm-screen');
@@ -210,17 +212,29 @@
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     }
 
-    function scrollXterm(lines) {
-      if (!terminal || !lines) return;
-      terminal.scrollLines(lines);
-      updateScrollThumb();
+    function flushScroll() {
+      scrollFrame = 0;
+      if (!pendingLines) return;
+      var lines = Math.max(-120, Math.min(120, pendingLines));
+      pendingLines -= lines;
+      sendScroll(lines);
+      if (pendingLines) scrollFrame = requestAnimationFrame(flushScroll);
+    }
+
+    function queueScroll(lines) {
+      if (scrollState.historySize > 0) {
+        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines));
+        updateScrollThumb();
+      }
+      pendingLines += lines;
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
     }
 
     function onWheel(e) {
       stopTerminalWheel(e);
       var delta = e.deltaY || (-e.wheelDelta) || 0;
       var lines = Math.max(1, Math.round(Math.abs(delta) / LINE_PX));
-      scrollXterm(delta > 0 ? lines : -lines);
+      queueScroll(delta > 0 ? lines : -lines);
     }
 
     function onTouchStart(e) {
@@ -234,24 +248,37 @@
       touchStartY = e.touches[0].clientY;
       accumulated += dy;
       while (Math.abs(accumulated) >= LINE_PX) {
-        scrollXterm(accumulated > 0 ? 1 : -1);
+        queueScroll(accumulated > 0 ? 1 : -1);
         accumulated += accumulated > 0 ? -LINE_PX : LINE_PX;
       }
     }
 
+    var pointerStartY = 0;
+    var pointerStartScroll = 0;
+    var pointerAccumulated = 0;
     function onPointerMove(e) {
       e.preventDefault();
-      if (!terminal || !scrollHandle || !scrollThumb) return;
-      var buffer = terminal.buffer.active;
-      if ((buffer.baseY || 0) <= 0) return;
-      var rect = scrollHandle.getBoundingClientRect();
-      var thumbHeight = scrollThumb.clientHeight || 72;
-      var maxTop = Math.max(1, rect.height - thumbHeight);
-      var y = Math.max(0, Math.min(maxTop, e.clientY - rect.top - thumbHeight / 2));
-      var targetScrollPosition = Math.round((1 - y / maxTop) * buffer.baseY);
-      var targetViewportY = Math.max(0, Math.min(buffer.baseY, buffer.baseY - targetScrollPosition));
-      terminal.scrollToLine(targetViewportY);
-      updateScrollThumb();
+      if (scrollHandle && scrollThumb && scrollState.historySize > 0) {
+        var trackHeight = scrollHandle.clientHeight || 1;
+        var thumbHeight = scrollThumb.clientHeight || 72;
+        var maxTop = Math.max(1, trackHeight - thumbHeight);
+        var dy = e.clientY - pointerStartY;
+        var targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)));
+        var delta = targetScroll - scrollState.scrollPosition;
+        if (delta) {
+          scrollState.scrollPosition = targetScroll;
+          updateScrollThumb();
+          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta));
+        }
+        return;
+      }
+      var dy = e.clientY - pointerStartY;
+      pointerStartY = e.clientY;
+      pointerAccumulated += dy;
+      while (Math.abs(pointerAccumulated) >= 6) {
+        queueScroll(pointerAccumulated > 0 ? 2 : -2);
+        pointerAccumulated += pointerAccumulated > 0 ? -6 : 6;
+      }
     }
     function onPointerUp() {
       window.removeEventListener('pointermove', onPointerMove);
@@ -259,7 +286,9 @@
     }
     function onPointerDown(e) {
       e.preventDefault();
-      onPointerMove(e);
+      pointerStartY = e.clientY;
+      pointerStartScroll = scrollState.scrollPosition;
+      pointerAccumulated = 0;
       window.addEventListener('pointermove', onPointerMove, { passive: false });
       window.addEventListener('pointerup', onPointerUp, { once: true });
     }
@@ -281,7 +310,6 @@
       container.appendChild(scrollHandle);
       updateScrollThumb();
     }
-    if (terminal && terminal.onScroll) terminal.onScroll(updateScrollThumb);
   }
 
   var TERM_FONT = "'MesloNF', 'Menlo', 'Monaco', 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', monospace";
@@ -328,7 +356,7 @@
         brightYellow: '#ffe066', brightBlue: '#5c7cfa', brightMagenta: '#da77f2',
         brightCyan: '#3bc9db', brightWhite: '#f8f9fa',
       },
-      cursorBlink: true, allowProposedApi: true, scrollback: 5000,
+      cursorBlink: true, allowProposedApi: true, scrollback: 0,
     });
 
     fitAddon = new window.FitAddon.FitAddon();
@@ -352,7 +380,10 @@
     currentWs = new WebSocket(wsUrl);
 
     var termEl = container.querySelector('.xterm');
-    if (termEl) setupTouchScroll(termEl);
+    if (termEl) setupTouchScroll(termEl, function(lines) {
+      if (currentWs && currentWs.readyState === WebSocket.OPEN)
+        currentWs.send(JSON.stringify({ type: 'scroll', lines: lines }));
+    });
 
     currentWs.onopen = function() {
       statusDot.className = 'status-dot connected';
@@ -369,10 +400,9 @@
           terminal.write('\x1b[3J\x1b[2J\x1b[H');
           try { terminal.clear(); terminal.scrollToBottom(); } catch(err) {}
         } else if (msg.type === 'scroll-state') {
-          if (window.__agentTermUpdateScrollState) window.__agentTermUpdateScrollState();
+          if (window.__agentTermUpdateScrollState) window.__agentTermUpdateScrollState(msg);
         } else if (msg.type === 'output' && msg.data) {
           terminal.write(msg.data);
-          if (window.__agentTermUpdateScrollState) requestAnimationFrame(window.__agentTermUpdateScrollState);
         }
       } catch(err) {}
     };
