@@ -331,6 +331,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const localDeviceId = config.device_id || null
     if (deviceId && deviceId !== localDeviceId) {
       const result = await remote.resetSession(name, deviceId)
+      if (!result?.error) remote.detachSession(name, deviceId)
       return result?.error ? { success: false, error: result.error } : { success: true }
     }
     ptyManager.resetSession(name)

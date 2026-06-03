@@ -90,7 +90,11 @@ export function attachSession(name: string, cols = 80, rows = 24, deviceId?: str
   ws.on("open", () => { ws.send(JSON.stringify({ type: "resize", cols, rows })) })
   ws.on("message", (raw: Buffer | string) => {
     if (connections.get(k)?.ws !== ws) return
-    try { const msg = JSON.parse(raw.toString()); if (msg.type === "output" && msg.data) onOutput(name, msg.data, deviceId || null) } catch {}
+    try {
+      const msg = JSON.parse(raw.toString())
+      if (msg.type === "clear") onOutput(name, "[3J[2J[H", deviceId || null)
+      else if (msg.type === "output" && msg.data) onOutput(name, msg.data, deviceId || null)
+    } catch {}
   })
   ws.on("close", () => {
     if (connections.get(k)?.ws !== ws) return

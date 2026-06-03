@@ -31,6 +31,12 @@ function sendError(ws: WebSocket, message: string): void {
   }
 }
 
+function sendClear(ws: WebSocket): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(encodeMessage({ type: "clear" }));
+  }
+}
+
 function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfig): void {
   if (!localViewers.has(sessionName)) localViewers.set(sessionName, new Set());
   localViewers.get(sessionName)!.add(ws);
@@ -193,6 +199,19 @@ export function handleRelayOutput(deviceId: string, sessionName: string, data: s
       ws.send(msg);
     }
   }
+}
+
+export function broadcastLocalClear(sessionName: string): void {
+  const viewers = localViewers.get(sessionName);
+  if (!viewers) return;
+  for (const ws of viewers) sendClear(ws);
+}
+
+export function handleRelayClear(deviceId: string, sessionName: string): void {
+  const relayKey = `${deviceId}:${sessionName}`;
+  const viewers = relayViewers.get(relayKey);
+  if (!viewers) return;
+  for (const ws of viewers) sendClear(ws);
 }
 
 export function handleRelayExit(deviceId: string, sessionName: string): void {

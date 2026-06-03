@@ -2,7 +2,7 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { captureSessionPane, createSession, getTmuxEnv, getTmuxPath, killSession, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
+import { captureSessionPane, createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
 import { resetSession as resetLocalPtySession } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
@@ -122,9 +122,9 @@ function handleRelayKill(sessionName: string): void {
 }
 
 function handleRelayReset(sessionName: string): void {
-  respawnSessionPane(sessionName)
-  const snapshot = captureSessionPane(sessionName)
-  if (snapshot) send({ type: "relay-output", sessionName, data: "\x1b[2J\x1b[H" + snapshot.replace(/\n/g, "\r\n") + "\r\n" })
+  handleRelayDetach(sessionName)
+  send({ type: "relay-clear", sessionName })
+  resetSessionFresh(sessionName)
   syncSessions()
 }
 

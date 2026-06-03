@@ -1,6 +1,6 @@
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
-import { getTmuxEnv, getTmuxPath as resolveTmuxPath, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
+import { getTmuxEnv, getTmuxPath as resolveTmuxPath, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
 
 const sessions = new Map<string, IPty>()
 const sessionSizes = new Map<string, { cols: number; rows: number }>()
@@ -70,7 +70,9 @@ export function scrollPty(sessionName: string, lines: number): void {
 }
 
 export function resetSession(sessionName: string): void {
-  respawnSessionPane(sessionName)
+  onOutput(sessionName, "[3J[2J[H")
+  detachSession(sessionName)
+  resetSessionFresh(sessionName)
 }
 
 export function detachAll(): void {

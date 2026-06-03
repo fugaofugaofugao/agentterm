@@ -8,7 +8,7 @@ import {
   hashPassword, listSessions,
 } from "@agentterm/shared";
 import type { AppConfig, SessionInfo, DeviceInfo, WsMessage } from "@agentterm/shared";
-import { handleWsConnection, handleRelayOutput, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl } from "./ws";
+import { handleWsConnection, handleRelayOutput, handleRelayClear, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl, broadcastLocalClear } from "./ws";
 import { clientRegistry } from "./client-registry";
 
 function decodeRelayMessage(raw: string): WsMessage | null {
@@ -228,8 +228,9 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       res.json({ ok: true });
       return;
     }
-    const { respawnSessionPane } = require("@agentterm/shared");
-    respawnSessionPane(req.params.name);
+    broadcastLocalClear(req.params.name);
+    const { resetSessionFresh } = require("@agentterm/shared");
+    resetSessionFresh(req.params.name, currentConfig.tmux?.default_shell);
     res.json({ ok: true });
   });
 
@@ -281,6 +282,11 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
         case "relay-output":
           if (registeredDeviceId && msg.sessionName && msg.data) {
             handleRelayOutput(registeredDeviceId, msg.sessionName, msg.data);
+          }
+          break;
+        case "relay-clear":
+          if (registeredDeviceId && msg.sessionName) {
+            handleRelayClear(registeredDeviceId, msg.sessionName);
           }
           break;
         case "relay-exit":

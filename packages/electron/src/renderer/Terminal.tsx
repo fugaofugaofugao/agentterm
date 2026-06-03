@@ -63,7 +63,21 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     ].filter(Boolean) as HTMLElement[]
     let touchStartY = 0
     let accumulatedTouch = 0
-    const linePx = 24
+    let pendingScrollLines = 0
+    let scrollFrame = 0
+    const linePx = 18
+    const flushScroll = () => {
+      scrollFrame = 0
+      if (!pendingScrollLines) return
+      const lines = Math.max(-120, Math.min(120, pendingScrollLines))
+      pendingScrollLines -= lines
+      window.agentTerm.scroll(sessionName, lines, deviceId)
+      if (pendingScrollLines) scrollFrame = requestAnimationFrame(flushScroll)
+    }
+    const queueScroll = (lines: number) => {
+      pendingScrollLines += lines
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll)
+    }
     const stopScrollEvent = (event: WheelEvent | TouchEvent) => {
       event.preventDefault()
       event.stopPropagation()
@@ -73,7 +87,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       stopScrollEvent(event)
       const delta = event.deltaY || -event.wheelDelta || 0
       const lines = Math.max(1, Math.round(Math.abs(delta) / linePx))
-      window.agentTerm.scroll(sessionName, delta > 0 ? lines : -lines, deviceId)
+      queueScroll(delta > 0 ? lines : -lines)
     }
     const handleTouchStart = (event: TouchEvent) => {
       if (event.touches.length === 1) {
@@ -88,7 +102,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       touchStartY = event.touches[0].clientY
       accumulatedTouch += dy
       while (Math.abs(accumulatedTouch) >= linePx) {
-        window.agentTerm.scroll(sessionName, accumulatedTouch > 0 ? 1 : -1, deviceId)
+        queueScroll(accumulatedTouch > 0 ? 1 : -1)
         accumulatedTouch += accumulatedTouch > 0 ? -linePx : linePx
       }
     }
@@ -140,6 +154,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     return () => {
       clearTimeout(t1)
       clearTimeout(t2)
+      if (scrollFrame) cancelAnimationFrame(scrollFrame)
       observer.disconnect()
       scrollTargets.forEach((target) => {
         target.removeEventListener("wheel", handleWheel, { capture: true })

@@ -178,7 +178,9 @@
   function setupTouchScroll(termElement, sendScroll) {
     var touchStartY = 0;
     var accumulated = 0;
-    var LINE_PX = 24;
+    var pendingLines = 0;
+    var scrollFrame = 0;
+    var LINE_PX = 18;
     var targets = [termElement];
     var viewport = termElement.querySelector('.xterm-viewport');
     var screen = termElement.querySelector('.xterm-screen');
@@ -191,11 +193,25 @@
       if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     }
 
+    function flushScroll() {
+      scrollFrame = 0;
+      if (!pendingLines) return;
+      var lines = Math.max(-120, Math.min(120, pendingLines));
+      pendingLines -= lines;
+      sendScroll(lines);
+      if (pendingLines) scrollFrame = requestAnimationFrame(flushScroll);
+    }
+
+    function queueScroll(lines) {
+      pendingLines += lines;
+      if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
+    }
+
     function onWheel(e) {
       stopTerminalWheel(e);
       var delta = e.deltaY || (-e.wheelDelta) || 0;
       var lines = Math.max(1, Math.round(Math.abs(delta) / LINE_PX));
-      sendScroll(delta > 0 ? lines : -lines);
+      queueScroll(delta > 0 ? lines : -lines);
     }
 
     function onTouchStart(e) {
@@ -209,7 +225,7 @@
       touchStartY = e.touches[0].clientY;
       accumulated += dy;
       while (Math.abs(accumulated) >= LINE_PX) {
-        sendScroll(accumulated > 0 ? 1 : -1);
+        queueScroll(accumulated > 0 ? 1 : -1);
         accumulated += accumulated > 0 ? -LINE_PX : LINE_PX;
       }
     }
@@ -303,7 +319,15 @@
       });
     };
     currentWs.onmessage = function(event) {
-      try { var msg = JSON.parse(event.data); if (msg.type === 'output' && msg.data) terminal.write(msg.data); } catch(err) {}
+      try {
+        var msg = JSON.parse(event.data);
+        if (msg.type === 'clear') {
+          terminal.write('\x1b[3J\x1b[2J\x1b[H');
+          try { terminal.clear(); terminal.scrollToBottom(); } catch(err) {}
+        } else if (msg.type === 'output' && msg.data) {
+          terminal.write(msg.data);
+        }
+      } catch(err) {}
     };
     currentWs.onclose = function() {
       statusDot.className = 'status-dot disconnected';

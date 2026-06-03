@@ -163,9 +163,7 @@ export function scrollSessionPane(name: string, lines: number): void {
     if (lines < 0) execTmuxQuiet(["copy-mode", "-u", "-t", name]);
     const command = lines < 0 ? "scroll-up" : "scroll-down";
     const count = Math.min(Math.max(Math.abs(Math.trunc(lines)), 1), 200);
-    for (let i = 0; i < count; i += 1) {
-      execTmuxQuiet(["send-keys", "-t", name, "-X", command]);
-    }
+    execTmuxQuiet(["send-keys", "-t", name, "-N", String(count), "-X", command]);
   } catch {
   }
 }
@@ -178,6 +176,30 @@ export function exitSessionCopyMode(name: string): void {
   }
 }
 
+
+export function resetSessionFresh(name: string, shell?: string): void {
+  try {
+    exitSessionCopyMode(name);
+  } catch {
+  }
+
+  try {
+    if (sessionExists(name)) {
+      killSession(name);
+    }
+    createSession(name, shell);
+    try { execTmuxQuiet(["clear-history", "-t", name]); } catch {}
+    return;
+  } catch {
+  }
+
+  try {
+    respawnSessionPane(name, shell);
+    try { execTmuxQuiet(["clear-history", "-t", name]); } catch {}
+  } catch {
+    try { if (!sessionExists(name)) createSession(name, shell); } catch {}
+  }
+}
 
 export function respawnSessionPane(name: string, shell?: string): void {
   try {
