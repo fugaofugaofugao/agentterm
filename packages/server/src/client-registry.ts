@@ -35,6 +35,21 @@ class ClientRegistry {
     return all;
   }
 
+  requestSessionSyncForUser(username: string): void {
+    for (const client of this.clients.values()) {
+      if (client.username === username && client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(JSON.stringify({ type: "session-sync-request" }));
+      }
+    }
+  }
+
+  requestSessionSyncForDevice(deviceId: string): void {
+    const client = this.clients.get(deviceId);
+    if (client && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(JSON.stringify({ type: "session-sync-request" }));
+    }
+  }
+
   getClientWs(deviceId: string): WebSocket | null {
     return this.clients.get(deviceId)?.ws || null;
   }

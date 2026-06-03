@@ -2,10 +2,21 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState } from "@agentterm/shared"
-import { resetSession as resetLocalPtySession } from "./pty-manager"
+import * as path from "path"
+import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState, configureAgentTermSession } from "@agentterm/shared"
+import { resetSession as resetLocalPtySession, attachSession as attachLocalPtySession, writeToPty as writeToLocalPty, resizePty as resizeLocalPty, scrollPty as scrollLocalPty, addOutputListener as addLocalOutputListener, addExitListener as addLocalExitListener } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
+
+function getWindowsShell(): { file: string; args: string[] } {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows"
+  const powershell = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+  return { file: process.env.AGENTTERM_WINDOWS_SHELL || powershell, args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"] }
+}
+
+function getDefaultCwd(): string {
+  return process.env.USERPROFILE || process.env.HOME || process.cwd()
+}
 
 interface HostConnectionConfig {
   url: string
@@ -23,6 +34,8 @@ let sessionListProvider: SessionListProvider = () => []
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let syncTimer: ReturnType<typeof setInterval> | null = null
 const relayPtys = new Map<string, IPty>()
+const relayLocalPtys = new Set<string>()
+const relayLocalCleanups = new Map<string, Array<() => void>>()
 const relaySizes = new Map<string, { cols: number; rows: number }>()
 const suppressRelayExit = new Set<string>()
 const recentRelayInputs = new Map<string, { data: string; at: number }>()
@@ -48,7 +61,36 @@ function syncSessions(): void {
 
 function handleRelayAttach(sessionName: string, cols: number, rows: number): void {
   relaySizes.set(sessionName, { cols: cols || 80, rows: rows || 24 })
-  if (relayPtys.has(sessionName)) return
+  if (relayPtys.has(sessionName) || relayLocalPtys.has(sessionName)) return
+
+  if (process.platform === "win32") {
+    try {
+      if (!sessionExists(sessionName)) {
+        createSession(sessionName, undefined, cols || 80, rows || 24)
+        freshRelaySessions.add(sessionName)
+      }
+      relayLocalPtys.add(sessionName)
+      attachLocalPtySession(sessionName, cols || 80, rows || 24)
+      const removeOutput = addLocalOutputListener((session, data) => {
+        if (session === sessionName && relayLocalPtys.has(sessionName)) send({ type: "relay-output", sessionName, data })
+      })
+      const removeExit = addLocalExitListener((session) => {
+        if (session !== sessionName || !relayLocalPtys.has(sessionName)) return
+        relayLocalPtys.delete(sessionName)
+        relayLocalCleanups.get(sessionName)?.forEach((cleanup) => cleanup())
+        relayLocalCleanups.delete(sessionName)
+        send({ type: "relay-exit", sessionName })
+      })
+      relayLocalCleanups.set(sessionName, [removeOutput, removeExit])
+      sendRelayScrollState(sessionName)
+    } catch (err: any) {
+      send({ type: "relay-output", sessionName, data: `
+[31mFailed to attach relay PowerShell session: ${err?.message || err}[0m
+` })
+      send({ type: "relay-exit", sessionName })
+    }
+    return
+  }
 
   let term: IPty
   try {
@@ -56,11 +98,15 @@ function handleRelayAttach(sessionName: string, cols: number, rows: number): voi
       createSession(sessionName, undefined, cols || 80, rows || 24)
       freshRelaySessions.add(sessionName)
     }
-    term = pty.spawn(tmuxPath, ["new-session", "-A", "-s", sessionName], {
+    if (process.platform !== "win32") configureAgentTermSession(sessionName)
+    const command = process.platform === "win32"
+      ? getWindowsShell()
+      : { file: tmuxPath, args: ["new-session", "-A", "-s", sessionName] }
+    term = pty.spawn(command.file, command.args, {
     name: "xterm-256color",
     cols: cols || 80,
     rows: rows || 24,
-    cwd: process.env.HOME || "/",
+    cwd: getDefaultCwd(),
     env: getTmuxEnv({ TERM: "xterm-256color" }),
     })
   } catch (err: any) {
@@ -87,6 +133,11 @@ function handleRelayAttach(sessionName: string, cols: number, rows: number): voi
 }
 
 function handleRelayDetach(sessionName: string): void {
+  if (relayLocalPtys.delete(sessionName)) {
+    relayLocalCleanups.get(sessionName)?.forEach((cleanup) => cleanup())
+    relayLocalCleanups.delete(sessionName)
+    return
+  }
   const term = relayPtys.get(sessionName)
   if (term) {
     term.kill()
@@ -101,16 +152,19 @@ function sendRelayScrollState(sessionName: string): void {
 }
 
 function handleRelayInput(sessionName: string, data: string): void {
-  if (relayPtys.has(sessionName)) exitSessionCopyMode(sessionName)
+  if (relayLocalPtys.has(sessionName)) { writeToLocalPty(sessionName, data); return }
+  if (process.platform !== "win32" && relayPtys.has(sessionName)) exitSessionCopyMode(sessionName)
   relayPtys.get(sessionName)?.write(data)
   sendRelayScrollState(sessionName)
 }
 
 function handleRelayResize(sessionName: string, cols: number, rows: number): void {
+  if (relayLocalPtys.has(sessionName)) { resizeLocalPty(sessionName, cols, rows); return }
   relayPtys.get(sessionName)?.resize(cols, rows)
 }
 
 function handleRelayScroll(sessionName: string, lines: number): void {
+  if (relayLocalPtys.has(sessionName)) { scrollLocalPty(sessionName, lines); return }
   if (relayPtys.has(sessionName)) {
     scrollSessionPane(sessionName, lines)
     sendRelayScrollState(sessionName)
@@ -133,9 +187,15 @@ function handleRelayReset(sessionName: string): void {
   const size = relaySizes.get(sessionName)
   handleRelayDetach(sessionName)
   send({ type: "relay-clear", sessionName })
-  resetSessionFresh(sessionName, undefined, size?.cols, size?.rows)
-  freshRelaySessions.add(sessionName)
+  if (process.platform === "win32") {
+    resetLocalPtySession(sessionName)
+    createSession(sessionName)
+  } else {
+    resetSessionFresh(sessionName, undefined, size?.cols, size?.rows)
+    freshRelaySessions.add(sessionName)
+  }
   syncSessions()
+  sendRelayScrollState(sessionName)
 }
 
 function connect(): void {
@@ -185,6 +245,9 @@ function connect(): void {
         case "relay-reset":
           handleRelayReset(msg.sessionName)
           break
+        case "session-sync-request":
+          syncSessions()
+          break
         case "pong":
           break
       }
@@ -204,6 +267,9 @@ function connect(): void {
 
 function cleanup(full: boolean): void {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+  for (const cleanups of relayLocalCleanups.values()) cleanups.forEach((cleanup) => cleanup())
+  relayLocalCleanups.clear()
+  relayLocalPtys.clear()
   for (const [, term] of relayPtys) term.kill()
   relayPtys.clear()
   if (full) {

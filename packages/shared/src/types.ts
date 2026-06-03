@@ -75,6 +75,7 @@ export type WsMessageType =
   | "pong"
   | "client-hello"
   | "session-sync"
+  | "session-sync-request"
   | "relay-attach"
   | "relay-detach"
   | "relay-input"

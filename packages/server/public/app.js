@@ -50,12 +50,15 @@
   // --- Sessions ---
   async function loadSessions() {
     showPage('#sessions-page');
+    var refreshBtn = $('#refresh-btn');
+    if (refreshBtn) { refreshBtn.classList.add('spinning'); refreshBtn.disabled = true; }
     try {
       var res = await fetch('/api/sessions', { headers: { 'Authorization': 'Bearer ' + token } });
       if (res.status === 401) { token = null; localStorage.removeItem('agentterm_token'); showPage('#login-page'); return; }
       var data = await res.json();
       renderSessions(data.sessions || []);
     } catch(err) { $('#session-list').innerHTML = '<p class="empty-hint">Unable to load sessions</p>'; }
+    finally { if (refreshBtn) setTimeout(function(){ refreshBtn.classList.remove('spinning'); refreshBtn.disabled = false; }, 300); }
   }
 
   function renderSessions(sessions) {
@@ -91,6 +94,7 @@
         html += '<div class="session-left"><div class="session-name">' + n + '</div>';
         html += '<div class="session-meta">' + s.windows + ' window' + (s.windows !== 1 ? 's' : '') + '</div></div>';
         if (s.attached) html += '<span class="session-badge">LIVE</span>';
+        html += '<button class="session-reset-btn" title="Reset session" data-name="' + n + '" data-device-id="' + escapeHtml(deviceId) + '">&#x21bb;</button>';
         html += '<span class="session-arrow">&#x203A;</span></div>';
       });
 
@@ -104,6 +108,31 @@
         openTerminal(el.dataset.name, el.dataset.deviceId || null);
       });
     });
+    list.querySelectorAll('.session-reset-btn').forEach(function(btn) {
+      btn.addEventListener('click', async function(e) {
+        e.preventDefault(); e.stopPropagation();
+        await resetSession(btn.dataset.name, btn.dataset.deviceId || null, btn);
+      });
+    });
+  }
+
+  async function resetSession(name, deviceId, button) {
+    if (!name) return;
+    var oldText = button ? button.textContent : '';
+    if (button) { button.disabled = true; button.textContent = '...'; }
+    try {
+      var res = await fetch('/api/sessions/' + encodeURIComponent(name) + '/reset', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: deviceId || null })
+      });
+      if (!res.ok) {
+        var data = await res.json().catch(function(){ return {}; });
+        alert(data.error || data.message || 'Reset failed');
+      }
+      await loadSessions();
+    } catch(err) { alert('Reset failed'); }
+    finally { if (button) { button.disabled = false; button.textContent = oldText || '\u21bb'; } }
   }
 
   function escapeHtml(s) {
@@ -181,23 +210,38 @@
     var pendingLines = 0;
     var scrollFrame = 0;
     var LINE_PX = 18;
-    var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 };
+    var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false };
     var scrollHandle = null;
     var scrollThumb = null;
+    function usesTmuxScroll() { return scrollState.paneHeight > 0; }
+    function getLocalScrollState() {
+      if (!terminal || !terminal.buffer || !terminal.buffer.active) return { scrollPosition: 0, historySize: 0, paneHeight: 0 };
+      var buffer = terminal.buffer.active;
+      var historySize = Math.max(0, buffer.baseY || 0);
+      var scrollPosition = Math.max(0, (buffer.baseY || 0) - (buffer.viewportY || 0));
+      return { scrollPosition: scrollPosition, historySize: historySize, paneHeight: terminal.rows || 0 };
+    }
+    function getEffectiveScrollState() { return usesTmuxScroll() ? scrollState : getLocalScrollState(); }
     function updateScrollThumb() {
       if (!scrollHandle || !scrollThumb) return;
+      var state = getEffectiveScrollState();
+      var hasScrollableHistory = state.historySize > 0 || state.scrollPosition > 0;
+      scrollHandle.style.display = hasScrollableHistory ? 'block' : 'none';
+      if (!hasScrollableHistory) return;
       var trackHeight = scrollHandle.clientHeight || 1;
-      var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))));
+      var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, state.paneHeight / Math.max(state.historySize + state.paneHeight, 1))))));
       var maxTop = Math.max(0, trackHeight - thumbHeight);
-      var maxScroll = Math.max(1, scrollState.historySize);
-      var ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll));
+      var maxScroll = Math.max(1, state.historySize);
+      var ratio = 1 - Math.max(0, Math.min(1, state.scrollPosition / maxScroll));
       scrollThumb.style.height = thumbHeight + 'px';
       scrollThumb.style.transform = 'translateY(' + Math.round(maxTop * ratio) + 'px)';
     }
+    window.__agentTermRefreshScrollThumb = updateScrollThumb;
     window.__agentTermUpdateScrollState = function(state) {
       scrollState.scrollPosition = Number(state.scrollPosition || 0);
       scrollState.historySize = Number(state.historySize || 0);
       scrollState.paneHeight = Number(state.paneHeight || 0);
+      scrollState.inCopyMode = !!state.inCopyMode;
       updateScrollThumb();
     };
     var targets = [termElement];
@@ -217,12 +261,13 @@
       if (!pendingLines) return;
       var lines = Math.max(-120, Math.min(120, pendingLines));
       pendingLines -= lines;
-      sendScroll(lines);
+      if (usesTmuxScroll()) sendScroll(lines);
+      else if (terminal) { terminal.scrollLines(lines); requestAnimationFrame(updateScrollThumb); }
       if (pendingLines) scrollFrame = requestAnimationFrame(flushScroll);
     }
 
     function queueScroll(lines) {
-      if (scrollState.historySize > 0) {
+      if (usesTmuxScroll() && scrollState.historySize > 0) {
         scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines));
         updateScrollThumb();
       }
@@ -258,17 +303,23 @@
     var pointerAccumulated = 0;
     function onPointerMove(e) {
       e.preventDefault();
-      if (scrollHandle && scrollThumb && scrollState.historySize > 0) {
+      var state = getEffectiveScrollState();
+      if (scrollHandle && scrollThumb && state.historySize > 0) {
         var trackHeight = scrollHandle.clientHeight || 1;
         var thumbHeight = scrollThumb.clientHeight || 72;
         var maxTop = Math.max(1, trackHeight - thumbHeight);
         var dy = e.clientY - pointerStartY;
-        var targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)));
-        var delta = targetScroll - scrollState.scrollPosition;
+        var targetScroll = Math.max(0, Math.min(state.historySize, pointerStartScroll - Math.round((dy / maxTop) * state.historySize)));
+        var delta = targetScroll - state.scrollPosition;
         if (delta) {
-          scrollState.scrollPosition = targetScroll;
-          updateScrollThumb();
-          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta));
+          if (usesTmuxScroll()) {
+            scrollState.scrollPosition = targetScroll;
+            updateScrollThumb();
+            queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta));
+          } else if (terminal) {
+            terminal.scrollToLine(Math.max(0, terminal.buffer.active.baseY - targetScroll));
+            updateScrollThumb();
+          }
         }
         return;
       }
@@ -287,7 +338,7 @@
     function onPointerDown(e) {
       e.preventDefault();
       pointerStartY = e.clientY;
-      pointerStartScroll = scrollState.scrollPosition;
+      pointerStartScroll = getEffectiveScrollState().scrollPosition;
       pointerAccumulated = 0;
       window.addEventListener('pointermove', onPointerMove, { passive: false });
       window.addEventListener('pointerup', onPointerUp, { once: true });
@@ -356,7 +407,7 @@
         brightYellow: '#ffe066', brightBlue: '#5c7cfa', brightMagenta: '#da77f2',
         brightCyan: '#3bc9db', brightWhite: '#f8f9fa',
       },
-      cursorBlink: true, allowProposedApi: true, scrollback: 0,
+      cursorBlink: true, allowProposedApi: true, scrollback: 5000,
     });
 
     fitAddon = new window.FitAddon.FitAddon();
@@ -403,6 +454,7 @@
           if (window.__agentTermUpdateScrollState) window.__agentTermUpdateScrollState(msg);
         } else if (msg.type === 'output' && msg.data) {
           terminal.write(msg.data);
+          requestAnimationFrame(function() { if (window.__agentTermRefreshScrollThumb) window.__agentTermRefreshScrollThumb(); });
         }
       } catch(err) {}
     };

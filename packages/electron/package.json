@@ -1,12 +1,13 @@
 {
   "name": "@agentterm/electron",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "package": "electron-vite build && electron-builder --mac"
+    "package": "electron-vite build && electron-builder --mac",
+    "package:win": "electron-vite build && electron-builder --win portable --x64 --config.npmRebuild=false --config.buildDependenciesFromSource=false"
   },
   "build": {
     "appId": "com.agentterm.app",
@@ -47,6 +48,11 @@
         "dmg"
       ],
       "identity": null
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
     },
     "afterPack": "./scripts/sign-tmux.js"
   },

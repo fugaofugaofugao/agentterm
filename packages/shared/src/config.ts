@@ -5,21 +5,45 @@ import * as crypto from "crypto";
 import * as os from "os";
 import { AppConfig } from "./types";
 
-const CONFIG_PATHS = [
-  path.join(process.cwd(), "config.yaml"),
-  path.join(process.cwd(), "../..", "config.yaml"),
-  path.join(process.env.HOME || "", ".config/agentterm/config.yaml"),
-];
+function getHomeDir(): string {
+  if (process.platform === "win32") return process.env.USERPROFILE || process.env.HOME || process.cwd();
+  return process.env.HOME || process.env.USERPROFILE || process.cwd();
+}
+
+function getUserConfigPath(): string {
+  if (process.platform === "win32") {
+    const base = process.env.APPDATA || path.join(getHomeDir(), "AppData", "Roaming");
+    return path.join(base, "agentterm", "config.yaml");
+  }
+  return path.join(getHomeDir(), ".config/agentterm/config.yaml");
+}
+
+function getDefaultShell(): string {
+  return process.platform === "win32" ? "powershell.exe" : "/bin/zsh";
+}
+
+function isPackagedRuntime(): boolean {
+  return !!(process as any).resourcesPath;
+}
+
+function getConfigPaths(): string[] {
+  const userConfig = getUserConfigPath();
+  const devConfigs = [
+    path.join(process.cwd(), "config.yaml"),
+    path.join(process.cwd(), "../..", "config.yaml"),
+  ];
+  return isPackagedRuntime() ? [userConfig, ...devConfigs] : [...devConfigs, userConfig];
+}
 
 export function getConfigPath(): string | null {
-  for (const p of CONFIG_PATHS) {
+  for (const p of getConfigPaths()) {
     if (fs.existsSync(p)) return p;
   }
   return null;
 }
 
 export function getDefaultConfigPath(): string {
-  return path.join(process.env.HOME || "", ".config/agentterm/config.yaml");
+  return getUserConfigPath();
 }
 
 export function isConfigured(): boolean {
@@ -40,7 +64,7 @@ export function isConfigured(): boolean {
 export function loadConfig(): AppConfig {
   const p = getConfigPath();
   if (!p) {
-    throw new Error("config.yaml not found. Searched: " + CONFIG_PATHS.join(", "));
+    throw new Error("config.yaml not found. Searched: " + getConfigPaths().join(", "));
   }
   const raw = fs.readFileSync(p, "utf-8");
   const config = yaml.load(raw) as AppConfig;
@@ -69,12 +93,13 @@ export function resetConfig(): void {
   if (p && fs.existsSync(p)) {
     fs.unlinkSync(p);
   }
-  const electronDataDir = path.join(
-    process.env.HOME || "",
-    "Library/Application Support/@agentterm"
-  );
-  if (fs.existsSync(electronDataDir)) {
-    fs.rmSync(electronDataDir, { recursive: true, force: true });
+  const dataDirs = process.platform === "win32"
+    ? [path.join(process.env.APPDATA || path.join(getHomeDir(), "AppData", "Roaming"), "@agentterm")]
+    : [path.join(getHomeDir(), "Library/Application Support/@agentterm")];
+  for (const electronDataDir of dataDirs) {
+    if (fs.existsSync(electronDataDir)) {
+      fs.rmSync(electronDataDir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -105,7 +130,7 @@ export function createDefaultConfig(username: string, password: string, port?: n
       users: [{ username, password: hashPassword(password) }],
     },
     tmux: {
-      default_shell: "/bin/zsh",
+      default_shell: getDefaultShell(),
       aggressive_resize: true,
       session_prefix: "",
     },
@@ -118,7 +143,7 @@ export function createClientConfig(url: string, serverKey: string, username: str
     device_id: generateDeviceId(),
     server: { host: "127.0.0.1", port: 39488 },
     auth: { jwt_secret: "", server_key: "", users: [] },
-    tmux: { default_shell: "/bin/zsh", aggressive_resize: true, session_prefix: "" },
+    tmux: { default_shell: getDefaultShell(), aggressive_resize: true, session_prefix: "" },
     remote: { url, server_key: serverKey, username },
   };
 }

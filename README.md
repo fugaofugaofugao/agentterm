@@ -2,9 +2,9 @@
 
 **Remote monitor and control for Claude Code, Codex, Gemini CLI, and AI terminal agents.**
 
-AgentTerm is a macOS-first remote terminal monitor and control platform for long-running AI coding agents and terminal tools such as **Claude Code**, **Codex**, **Gemini CLI**, and any tmux-based shell workflow.
+AgentTerm is a cross-platform remote terminal monitor and control platform for long-running AI coding agents and terminal tools such as **Claude Code**, **Codex**, **Gemini CLI**, PowerShell, and tmux-based shell workflows.
 
-Run your AI terminal sessions on a Host Mac, keep them alive in tmux, and monitor or take over from another Mac, a browser, or a phone.
+Run AI terminal sessions on a Host Mac, connect Windows or Mac Clients, and monitor or take over sessions from the desktop app, a browser, or a phone.
 
 ## Why I built this
 
@@ -12,23 +12,31 @@ AI coding agents are most useful when they can keep working for long stretches: 
 
 AgentTerm came from the need to continuously monitor tools like Claude Code while away from the desk. With it, you can leave your computer, check the current AI terminal state from a phone or another machine, type follow-up instructions, and let the agent continue project work from anywhere. The goal is simple: free AI-assisted development from one physical workspace.
 
+## Version 1.0.1 highlights
+
+- **Windows Client support** — Windows portable exe can run local PowerShell sessions through ConPTY and sync them back to a Mac Host.
+- **Cross-device session refresh** — Host Electron and Web UI can request immediate Client session sync instead of waiting for the periodic heartbeat.
+- **Web session controls** — Web UI now has clearer refresh controls and per-session reset buttons.
+- **Cross-platform scrollback** — tmux sessions keep tmux copy-mode scrolling, while Windows/Web viewers use xterm scrollback for wheel, drag-handle, and mobile touch scrolling.
+- **Cleaner packaged config paths** — packaged Windows builds store config/session metadata under `%APPDATA%\agentterm` instead of temporary portable extraction directories.
+
 ## Features
 
 - **Remote AI terminal monitoring** — watch Claude Code, Codex, Gemini CLI, shells, scripts, and build logs from a browser.
 - **Remote control** — type into the same tmux-backed session from another device.
-- **Host / Client device model** — a Host exposes Web UI and relay; Clients can sync their own local tmux sessions back to the Host.
+- **Host / Client device model** — a Host exposes Web UI and relay; Clients can sync their own local macOS tmux or Windows PowerShell sessions back to the Host.
 - **Bundled tmux runtime** — packaged Electron app includes tmux and terminfo resources for consistent behavior.
 - **Device-aware sessions** — sessions keep their owning device identity to avoid accidentally controlling the wrong machine.
-- **Scrollback support** — browser and Electron terminals can browse tmux history.
+- **Scrollback support** — browser and Electron terminals can browse tmux history on macOS/Linux and xterm scrollback for Windows/PowerShell sessions.
 - **Runtime options** — launch at login, keep running in background, and keep the app awake while AgentTerm is running.
 
 ## How the terminal reliability fixes work
 
-AgentTerm uses tmux as the source of truth for terminal state. The v1.0.0 terminal fixes focus on making every entry point behave consistently:
+AgentTerm uses tmux as the source of truth for macOS/Linux terminal state and node-pty/ConPTY for Windows PowerShell sessions. The v1.0.1 terminal fixes focus on making every entry point behave consistently:
 
 - A shared tmux runtime helper resolves bundled tmux, terminfo, environment variables, pane capture, copy-mode scrolling, and copy-mode exit logic.
-- Electron local sessions, browser WebSocket sessions, and Client relay sessions all reuse the same tmux helpers.
-- Wheel and touch scrolling are converted into tmux copy-mode scroll commands, so browser and mobile scrollback reads the real tmux history.
+- Electron local sessions, browser WebSocket sessions, and Client relay sessions reuse the same tmux helpers on macOS/Linux and shared local PTY routing on Windows.
+- Wheel, touch, and drag-handle scrolling use tmux copy-mode for tmux sessions and xterm scrollback for Windows sessions, so desktop and mobile viewers can scroll history.
 - Before user input is written to a pty, AgentTerm exits tmux copy-mode so normal typing does not get interpreted as copy-mode control keys.
 - Device-aware routing keeps Host and Client sessions separate even when sessions share the same name.
 
@@ -85,13 +93,13 @@ http://your-host:39488
 
 ### Client mode
 
-Use Client mode on another Mac whose local tmux sessions should appear on the Host.
+Use Client mode on another Mac or Windows machine whose local sessions should appear on the Host.
 
 1. Open AgentTerm on the Client machine.
 2. Select **Client** during setup.
 3. Enter the Host URL and Server Key.
 4. Log in or register a user through the Host.
-5. Client sessions should appear in Host Electron and Web UI with a Client badge.
+5. Client sessions should appear in Host Electron and Web UI with a Client badge. The Host and Web refresh controls can request immediate Client session sync.
 
 ## Configuration
 
@@ -148,7 +156,17 @@ pnpm dev:electron
 Package macOS app:
 
 ```bash
+pnpm --filter @agentterm/shared build
+pnpm --filter @agentterm/server build
 pnpm --filter @agentterm/electron package
+```
+
+Package Windows portable exe from macOS:
+
+```bash
+pnpm --filter @agentterm/shared build
+pnpm --filter @agentterm/server build
+pnpm --filter @agentterm/electron package:win
 ```
 
 ## Security notes

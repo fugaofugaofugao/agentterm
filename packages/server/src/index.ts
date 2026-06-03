@@ -175,6 +175,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
   app.get("/api/sessions", (req, res) => {
     const user = requireAuth(req, res);
     if (!user) return;
+    clientRegistry.requestSessionSyncForUser(user);
 
     const hostDevice = getHostDevice();
     const hostSessions: SessionInfo[] = listSessions().map((s) => ({
@@ -200,6 +201,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
     if (deviceId && deviceId !== currentConfig.device_id) {
       const ok = sendRelayControl(deviceId, { type: "relay-create", sessionName: name });
       if (!ok) { res.status(404).json({ error: "Client device not connected" }); return; }
+      clientRegistry.requestSessionSyncForDevice(deviceId);
       res.json({ ok: true });
       return;
     }
@@ -215,6 +217,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
     if (deviceId && deviceId !== currentConfig.device_id) {
       const ok = sendRelayControl(deviceId, { type: "relay-kill", sessionName: req.params.name });
       if (!ok) { res.status(404).json({ error: "Client device not connected" }); return; }
+      clientRegistry.requestSessionSyncForDevice(deviceId);
       res.json({ ok: true });
       return;
     }
@@ -230,6 +233,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
     if (deviceId && deviceId !== currentConfig.device_id) {
       const ok = sendRelayControl(deviceId, { type: "relay-reset", sessionName: req.params.name });
       if (!ok) { res.status(404).json({ error: "Client device not connected" }); return; }
+      clientRegistry.requestSessionSyncForDevice(deviceId);
       res.json({ ok: true });
       return;
     }

@@ -270,3 +270,11 @@ input { touch-action: manipulation; }
   height: calc(var(--vh, 100dvh));
   max-height: calc(var(--vh, 100dvh));
 }
+
+
+.icon-action { display: inline-flex; align-items: center; gap: 6px; }
+#refresh-btn.spinning .refresh-icon { display: inline-block; animation: spin 0.5s linear; }
+.session-reset-btn { margin-left: 8px; border: none; background: transparent; color: #8888aa; cursor: pointer; border-radius: 4px; padding: 4px 6px; font-size: 14px; }
+.session-reset-btn:hover { color: #00d4ff; background: rgba(0, 212, 255, 0.1); }
+.session-reset-btn:disabled { opacity: 0.5; cursor: wait; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

@@ -1,6 +1,6 @@
 {
   "name": "agentterm",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Remote monitor and control for Claude Code, Codex, Gemini CLI and AI terminal agents",
   "scripts": {
@@ -15,11 +15,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-github-username/agentterm.git"
+    "url": "https://github.com/fugaofugaofugao/agentterm.git"
   },
-  "homepage": "https://github.com/your-github-username/agentterm#readme",
+  "homepage": "https://github.com/fugaofugaofugao/agentterm#readme",
   "bugs": {
-    "url": "https://github.com/your-github-username/agentterm/issues"
+    "url": "https://github.com/fugaofugaofugao/agentterm/issues"
   },
   "license": "Apache-2.0"
 }

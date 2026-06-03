@@ -1,6 +1,7 @@
 import { WebSocket } from "ws";
+import * as path from "path";
 import * as pty from "node-pty";
-import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, scrollSessionPane, exitSessionCopyMode, getSessionScrollState } from "@agentterm/shared";
+import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, scrollSessionPane, exitSessionCopyMode, getSessionScrollState, configureAgentTermSession } from "@agentterm/shared";
 import { clientRegistry } from "./client-registry";
 
 const relayViewers = new Map<string, Set<WebSocket>>();
@@ -8,6 +9,16 @@ const localViewers = new Map<string, Set<WebSocket>>();
 const recentlyViewed = new Map<string, number>();
 const RECENT_VIEW_TTL_MS = 15000;
 const recentLocalInputs = new Map<string, { data: string; at: number }>();
+
+function getWindowsShell(): { file: string; args: string[] } {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershell = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return { file: process.env.AGENTTERM_WINDOWS_SHELL || powershell, args: ["-NoLogo"] };
+}
+
+function getDefaultCwd(): string {
+  return process.env.USERPROFILE || process.env.HOME || process.cwd();
+}
 
 export function handleWsConnection(
   ws: WebSocket,
@@ -47,16 +58,20 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
   if (!localViewers.has(sessionName)) localViewers.set(sessionName, new Set());
   localViewers.get(sessionName)!.add(ws);
   recentlyViewed.set(sessionName, Date.now() + RECENT_VIEW_TTL_MS);
-  const shell = config.tmux.default_shell || "/bin/zsh";
+  const shell = config.tmux.default_shell || (process.platform === "win32" ? "powershell.exe" : "/bin/zsh");
   const tmuxPath = getTmuxPath();
+  if (process.platform !== "win32") configureAgentTermSession(sessionName);
 
   let term: pty.IPty;
   try {
-    term = pty.spawn(tmuxPath, ["new-session", "-A", "-s", sessionName], {
+    const command = process.platform === "win32"
+      ? getWindowsShell()
+      : { file: tmuxPath, args: ["new-session", "-A", "-s", sessionName] };
+    term = pty.spawn(command.file, command.args, {
     name: "xterm-256color",
     cols: 80,
     rows: 24,
-    cwd: process.env.HOME || "/",
+    cwd: getDefaultCwd(),
     env: getTmuxEnv({ TERM: "xterm-256color", SHELL: shell }),
   });
   } catch (err: any) {
@@ -81,7 +96,7 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
     switch (msg.type) {
       case "input":
         if (msg.data && !shouldDropDuplicateInput(recentLocalInputs, sessionName, msg.data)) {
-          exitSessionCopyMode(sessionName);
+          if (process.platform !== "win32") exitSessionCopyMode(sessionName);
           term.write(msg.data);
           sendScrollState(ws, sessionName);
         }

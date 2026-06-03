@@ -315,9 +315,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   })
 
   ipcMain.handle("sessions:create", async (_event: Electron.IpcMainInvokeEvent, name: string) => {
-    if (!authenticatedUser) return
-    shared.createSession(name)
-    if (currentMode === "client") triggerSessionSync()
+    if (!authenticatedUser) return { success: false, error: "Not authenticated" }
+    const sessionName = String(name || "").trim()
+    if (!sessionName) return { success: false, error: "Session name is required" }
+    try {
+      shared.createSession(sessionName)
+      if (currentMode === "client") triggerSessionSync()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Failed to create session" }
+    }
   })
 
   ipcMain.handle("sessions:kill", async (_event: Electron.IpcMainInvokeEvent, name: string, deviceId?: string | null) => {

@@ -81,14 +81,20 @@ export default function App() {
   }
 
   const handleCreateSession = async (name: string) => {
-    await window.agentTerm.createSession(name)
+    const sessionName = name.trim()
+    if (!sessionName) return
+    const result = await window.agentTerm.createSession(sessionName)
+    if (result && result.success === false) {
+      alert(result.error || "Failed to create session")
+      return
+    }
     const cfg = await window.agentTerm.configGet()
     const deviceId = cfg?.device_id || null
-    setSessions((prev) => prev.some((s) => s.name === name && (s.device?.id || null) === deviceId) ? prev : [
+    setSessions((prev) => prev.some((s) => s.name === sessionName && (s.device?.id || null) === deviceId) ? prev : [
       ...prev,
-      { name, windows: 1, created: new Date().toISOString(), attached: true, owner: user || "", device: { id: deviceId || "host", name: "Local", type: "host" } }
+      { name: sessionName, windows: 1, created: new Date().toISOString(), attached: true, owner: user || "", device: { id: deviceId || "host", name: "Local", type: "host" } }
     ])
-    setActiveSession(name)
+    setActiveSession(sessionName)
     setActiveDeviceId(deviceId)
     setTimeout(refreshSessions, 600)
   }

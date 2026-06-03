@@ -24,7 +24,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 0,
+      scrollback: 5000,
       theme: {
         background: "#1a1a2e",
         foreground: "#e0e0e0",
@@ -68,16 +68,28 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     let pendingScrollLines = 0
     let scrollFrame = 0
     const linePx = 18
-    const scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 }
+    const scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false }
+    const usesTmuxScroll = () => scrollState.paneHeight > 0
+    const getLocalScrollState = () => {
+      const buffer = term.buffer.active
+      const historySize = Math.max(0, buffer.baseY)
+      const scrollPosition = Math.max(0, buffer.baseY - buffer.viewportY)
+      return { scrollPosition, historySize, paneHeight: term.rows }
+    }
+    const getEffectiveScrollState = () => usesTmuxScroll() ? scrollState : getLocalScrollState()
     const updateScrollThumb = () => {
       const handle = scrollHandleRef.current
       const thumb = scrollThumbRef.current
       if (!handle || !thumb) return
+      const state = getEffectiveScrollState()
+      const hasScrollableHistory = state.historySize > 0 || state.scrollPosition > 0
+      handle.style.display = hasScrollableHistory ? "block" : "none"
+      if (!hasScrollableHistory) return
       const trackHeight = handle.clientHeight
-      const thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))))
+      const thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, state.paneHeight / Math.max(state.historySize + state.paneHeight, 1))))))
       const maxTop = Math.max(0, trackHeight - thumbHeight)
-      const maxScroll = Math.max(1, scrollState.historySize)
-      const ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll))
+      const maxScroll = Math.max(1, state.historySize)
+      const ratio = 1 - Math.max(0, Math.min(1, state.scrollPosition / maxScroll))
       thumb.style.height = thumbHeight + "px"
       thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`
     }
@@ -86,13 +98,16 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       if (!pendingScrollLines) return
       const lines = Math.max(-120, Math.min(120, pendingScrollLines))
       pendingScrollLines -= lines
-      window.agentTerm.scroll(sessionName, lines, deviceId)
+      if (usesTmuxScroll()) window.agentTerm.scroll(sessionName, lines, deviceId)
+      else { term.scrollLines(lines); requestAnimationFrame(updateScrollThumb) }
       if (pendingScrollLines) scrollFrame = requestAnimationFrame(flushScroll)
     }
     const queueScroll = (lines: number) => {
-      if (scrollState.historySize > 0) {
-        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines))
-        updateScrollThumb()
+      if (usesTmuxScroll()) {
+        if (scrollState.historySize > 0) {
+          scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines))
+          updateScrollThumb()
+        }
       }
       pendingScrollLines += lines
       if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll)
@@ -132,17 +147,23 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       event.preventDefault()
       const handle = scrollHandleRef.current
       const thumb = scrollThumbRef.current
-      if (handle && thumb && scrollState.historySize > 0) {
+      const state = getEffectiveScrollState()
+      if (handle && thumb && state.historySize > 0) {
         const trackHeight = handle.clientHeight
         const thumbHeight = thumb.clientHeight || 72
         const maxTop = Math.max(1, trackHeight - thumbHeight)
         const dy = event.clientY - pointerStartY
-        const targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)))
-        const delta = targetScroll - scrollState.scrollPosition
+        const targetScroll = Math.max(0, Math.min(state.historySize, pointerStartScroll - Math.round((dy / maxTop) * state.historySize)))
+        const delta = targetScroll - state.scrollPosition
         if (delta) {
-          scrollState.scrollPosition = targetScroll
-          updateScrollThumb()
-          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta))
+          if (usesTmuxScroll()) {
+            scrollState.scrollPosition = targetScroll
+            updateScrollThumb()
+            queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta))
+          } else {
+            term.scrollToLine(Math.max(0, term.buffer.active.baseY - targetScroll))
+            updateScrollThumb()
+          }
         }
         return
       }
@@ -161,7 +182,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const handleScrollPointerDown = (event: PointerEvent) => {
       event.preventDefault()
       pointerStartY = event.clientY
-      pointerStartScroll = scrollState.scrollPosition
+      pointerStartScroll = getEffectiveScrollState().scrollPosition
       pointerAccumulated = 0
       window.addEventListener("pointermove", handleScrollPointerMove, { passive: false })
       window.addEventListener("pointerup", handleScrollPointerUp, { once: true })
@@ -190,6 +211,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         window.agentTerm.attachSession(sessionName, term.cols, term.rows, deviceId).catch(showError)
       } else {
         window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
+      requestAnimationFrame(updateScrollThumb)
       }
     }
 
@@ -203,6 +225,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const removeOutput = window.agentTerm.onOutput((session, data, outputDeviceId) => {
       if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
         term.write(data)
+        requestAnimationFrame(updateScrollThumb)
       }
     })
     const removeScrollState = window.agentTerm.onScrollState((session, state, outputDeviceId) => {
@@ -210,6 +233,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         scrollState.scrollPosition = Number(state.scrollPosition || 0)
         scrollState.historySize = Number(state.historySize || 0)
         scrollState.paneHeight = Number(state.paneHeight || 0)
+        scrollState.inCopyMode = !!state.inCopyMode
         updateScrollThumb()
       }
     })
@@ -219,6 +243,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       if (failed) return
       fitAddon.fit()
       window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
+      requestAnimationFrame(updateScrollThumb)
     })
     observer.observe(containerRef.current)
 
