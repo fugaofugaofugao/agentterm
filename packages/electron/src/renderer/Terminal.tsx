@@ -24,7 +24,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 0,
+      scrollback: 5000,
       theme: {
         background: "#1a1a2e",
         foreground: "#e0e0e0",
@@ -65,37 +65,30 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     ].filter(Boolean) as HTMLElement[]
     let touchStartY = 0
     let accumulatedTouch = 0
-    let pendingScrollLines = 0
-    let scrollFrame = 0
     const linePx = 18
-    const scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 }
+    const xtermScrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 }
     const updateScrollThumb = () => {
       const handle = scrollHandleRef.current
       const thumb = scrollThumbRef.current
       if (!handle || !thumb) return
-      const trackHeight = handle.clientHeight
-      const thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))))
+      const buffer = term.buffer.active
+      xtermScrollState.historySize = Math.max(0, buffer.baseY)
+      xtermScrollState.paneHeight = Math.max(0, term.rows)
+      xtermScrollState.scrollPosition = Math.max(0, buffer.baseY - buffer.viewportY)
+      const trackHeight = handle.clientHeight || 1
+      const totalRows = Math.max(1, xtermScrollState.historySize + xtermScrollState.paneHeight)
+      const thumbHeight = Math.max(44, Math.min(140, Math.round(trackHeight * Math.max(0.08, Math.min(1, xtermScrollState.paneHeight / totalRows)))))
       const maxTop = Math.max(0, trackHeight - thumbHeight)
-      const maxScroll = Math.max(1, scrollState.historySize)
-      const ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll))
+      const maxScroll = Math.max(1, xtermScrollState.historySize)
+      const ratio = 1 - Math.max(0, Math.min(1, xtermScrollState.scrollPosition / maxScroll))
       thumb.style.height = thumbHeight + "px"
       thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`
+      thumb.style.opacity = xtermScrollState.historySize > 0 ? "1" : "0.35"
     }
-    const flushScroll = () => {
-      scrollFrame = 0
-      if (!pendingScrollLines) return
-      const lines = Math.max(-120, Math.min(120, pendingScrollLines))
-      pendingScrollLines -= lines
-      window.agentTerm.scroll(sessionName, lines, deviceId)
-      if (pendingScrollLines) scrollFrame = requestAnimationFrame(flushScroll)
-    }
-    const queueScroll = (lines: number) => {
-      if (scrollState.historySize > 0) {
-        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines))
-        updateScrollThumb()
-      }
-      pendingScrollLines += lines
-      if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll)
+    const scrollXterm = (lines: number) => {
+      if (!lines) return
+      term.scrollLines(lines)
+      updateScrollThumb()
     }
     const stopScrollEvent = (event: WheelEvent | TouchEvent) => {
       event.preventDefault()
@@ -106,7 +99,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       stopScrollEvent(event)
       const delta = event.deltaY || -event.wheelDelta || 0
       const lines = Math.max(1, Math.round(Math.abs(delta) / linePx))
-      queueScroll(delta > 0 ? lines : -lines)
+      scrollXterm(delta > 0 ? lines : -lines)
     }
     const handleTouchStart = (event: TouchEvent) => {
       if (event.touches.length === 1) {
@@ -121,38 +114,25 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       touchStartY = event.touches[0].clientY
       accumulatedTouch += dy
       while (Math.abs(accumulatedTouch) >= linePx) {
-        queueScroll(accumulatedTouch > 0 ? 1 : -1)
+        scrollXterm(accumulatedTouch > 0 ? 1 : -1)
         accumulatedTouch += accumulatedTouch > 0 ? -linePx : linePx
       }
     }
-    let pointerStartY = 0
-    let pointerStartScroll = 0
-    let pointerAccumulated = 0
     const handleScrollPointerMove = (event: PointerEvent) => {
       event.preventDefault()
       const handle = scrollHandleRef.current
       const thumb = scrollThumbRef.current
-      if (handle && thumb && scrollState.historySize > 0) {
-        const trackHeight = handle.clientHeight
-        const thumbHeight = thumb.clientHeight || 72
-        const maxTop = Math.max(1, trackHeight - thumbHeight)
-        const dy = event.clientY - pointerStartY
-        const targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)))
-        const delta = targetScroll - scrollState.scrollPosition
-        if (delta) {
-          scrollState.scrollPosition = targetScroll
-          updateScrollThumb()
-          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta))
-        }
-        return
-      }
-      const dy = event.clientY - pointerStartY
-      pointerStartY = event.clientY
-      pointerAccumulated += dy
-      while (Math.abs(pointerAccumulated) >= 6) {
-        queueScroll(pointerAccumulated > 0 ? 2 : -2)
-        pointerAccumulated += pointerAccumulated > 0 ? -6 : 6
-      }
+      const buffer = term.buffer.active
+      if (!handle || !thumb || buffer.baseY <= 0) return
+      const rect = handle.getBoundingClientRect()
+      const thumbHeight = thumb.clientHeight || 72
+      const maxTop = Math.max(1, rect.height - thumbHeight)
+      const y = Math.max(0, Math.min(maxTop, event.clientY - rect.top - thumbHeight / 2))
+      const ratioFromTop = y / maxTop
+      const targetScrollPosition = Math.round((1 - ratioFromTop) * buffer.baseY)
+      const targetViewportY = Math.max(0, Math.min(buffer.baseY, buffer.baseY - targetScrollPosition))
+      term.scrollToLine(targetViewportY)
+      updateScrollThumb()
     }
     const handleScrollPointerUp = () => {
       window.removeEventListener("pointermove", handleScrollPointerMove)
@@ -160,9 +140,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     }
     const handleScrollPointerDown = (event: PointerEvent) => {
       event.preventDefault()
-      pointerStartY = event.clientY
-      pointerStartScroll = scrollState.scrollPosition
-      pointerAccumulated = 0
+      handleScrollPointerMove(event)
       window.addEventListener("pointermove", handleScrollPointerMove, { passive: false })
       window.addEventListener("pointerup", handleScrollPointerUp, { once: true })
     }
@@ -173,6 +151,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     })
     const scrollHandle = scrollHandleRef.current
     scrollHandle?.addEventListener("pointerdown", handleScrollPointerDown, { passive: false })
+    const scrollDisposable = term.onScroll(updateScrollThumb)
 
     let attached = false
     let failed = false
@@ -203,14 +182,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const removeOutput = window.agentTerm.onOutput((session, data, outputDeviceId) => {
       if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
         term.write(data)
-      }
-    })
-    const removeScrollState = window.agentTerm.onScrollState((session, state, outputDeviceId) => {
-      if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
-        scrollState.scrollPosition = Number(state.scrollPosition || 0)
-        scrollState.historySize = Number(state.historySize || 0)
-        scrollState.paneHeight = Number(state.paneHeight || 0)
-        updateScrollThumb()
+        requestAnimationFrame(updateScrollThumb)
       }
     })
     requestAnimationFrame(updateScrollThumb)
@@ -236,7 +208,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         target.removeEventListener("touchmove", handleTouchMove, { capture: true })
       })
       removeOutput()
-      removeScrollState()
+      scrollDisposable.dispose()
       window.agentTerm.detachSession(sessionName, deviceId)
       term.dispose()
     }
