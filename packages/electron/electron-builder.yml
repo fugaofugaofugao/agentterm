@@ -1,0 +1,17 @@
+appId: com.agentterm.monitor
+productName: AgentTerm Monitor
+directories:
+  output: release
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+files:
+  - out/**/*
+  - node_modules/**/*
+  - "!node_modules/**/build/Release/.deps"
+  - "!node_modules/**/build/Release/obj.target"
+extraMetadata:
+  main: out/main/index.js
+npmRebuild: true

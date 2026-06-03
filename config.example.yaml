@@ -1,0 +1,13 @@
+server:
+  host: 127.0.0.1
+  port: 39488
+
+auth:
+  jwt_secret: change-this-to-a-random-string
+  server_key: change-this-server-key
+  users: []
+
+tmux:
+  default_shell: /bin/zsh
+  aggressive_resize: true
+  session_prefix: ""

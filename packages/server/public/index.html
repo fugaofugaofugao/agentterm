@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>AgentTerm Monitor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preload" href="fonts/MesloNF-Regular.v2.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <link rel="preload" href="fonts/MesloNF-Bold.v2.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+</head>
+<body>
+  <div style="position:absolute;left:-9999px;font-family:MesloNF" aria-hidden="true">.</div>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-page" class="page hidden">
+      <div class="login-card">
+        <h1>AgentTerm Monitor</h1>
+        <p class="subtitle">Remote Terminal Monitor</p>
+        <form id="login-form">
+          <input type="text" id="username" placeholder="Username" autocomplete="username" required>
+          <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+          <button type="submit">Login</button>
+          <p id="login-error" class="error"></p>
+        </form>
+      </div>
+    </div>
+
+    <!-- Sessions -->
+    <div id="sessions-page" class="page hidden">
+      <div class="header">
+        <h2>Sessions</h2>
+        <div class="header-actions">
+          <button id="settings-btn" title="Settings">&#x2699;</button>
+          <button id="refresh-btn">Refresh</button>
+          <button id="logout-btn">Logout</button>
+        </div>
+      </div>
+      <div id="session-list"></div>
+    </div>
+
+    <!-- Settings -->
+    <div id="settings-page" class="page hidden">
+      <div class="header">
+        <h2>Settings</h2>
+        <div class="header-actions">
+          <button id="settings-back-btn">&larr; Back</button>
+        </div>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3>Server Key</h3>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" id="cfg-server-key" readonly style="font-family:monospace;font-size:12px">
+            <button type="button" id="copy-key-btn" style="white-space:nowrap;padding:8px 12px">Copy</button>
+          </div>
+          <p style="color:#888;font-size:12px;margin-top:4px">Share this key with Client devices to allow connections</p>
+        </div>
+        <div class="settings-section">
+          <h3>Server</h3>
+          <label>Host</label>
+          <input type="text" id="cfg-host" placeholder="127.0.0.1">
+          <label>Port</label>
+          <input type="number" id="cfg-port" placeholder="39488">
+        </div>
+        <div class="settings-section">
+          <h3>Auth</h3>
+          <label>New Password (leave blank to keep)</label>
+          <input type="password" id="cfg-password" placeholder="New password">
+        </div>
+        <div class="settings-section">
+          <h3>Tmux</h3>
+          <label>Default Shell</label>
+          <input type="text" id="cfg-shell" placeholder="/bin/zsh">
+          <label>Session Prefix</label>
+          <input type="text" id="cfg-prefix" placeholder="">
+        </div>
+        <div class="settings-actions">
+          <button id="settings-save-btn">Save</button>
+          <p id="settings-msg" class="error"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div id="terminal-page" class="page hidden">
+      <div class="terminal-header">
+        <button id="back-btn">&larr; Back</button>
+        <span id="session-title"></span>
+        <span id="connection-status" class="status-dot"></span>
+      </div>
+      <div id="terminal-container"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="addon-unicode11.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

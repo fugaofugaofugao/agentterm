@@ -1,0 +1,25 @@
+{
+  "name": "agentterm-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remote monitor and control for Claude Code, Codex, Gemini CLI and AI terminal agents",
+  "scripts": {
+    "dev:server": "pnpm --filter @termsync/server dev",
+    "dev:electron": "pnpm --filter @termsync/electron dev",
+    "build:server": "pnpm --filter @termsync/server build",
+    "build:electron": "pnpm --filter @termsync/electron build",
+    "build:shared": "pnpm --filter @termsync/shared build"
+  },
+  "dependencies": {
+    "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-github-username/agentterm-monitor.git"
+  },
+  "homepage": "https://github.com/your-github-username/agentterm-monitor#readme",
+  "bugs": {
+    "url": "https://github.com/your-github-username/agentterm-monitor/issues"
+  },
+  "license": "Apache-2.0"
+}

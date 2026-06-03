@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build outputs
+out/
+dist/
+packages/*/out/
+packages/electron/dist/
+packages/electron/release/
+*.tsbuildinfo
+
+# local config / secrets
+config.yaml
+*.local.yaml
+.env
+.env.*
+!.env.example
+
+# logs and caches
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.yarn-debug.log*
+.yarn-error.log*
+.cache/
+.vite/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# release archives
+*.dmg
+*.blockmap
+*.zip
+*.tar.gz

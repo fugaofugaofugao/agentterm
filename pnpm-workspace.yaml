@@ -1,0 +1,11 @@
+packages:
+  - "packages/*"
+
+allowBuilds:
+  electron: true
+  esbuild: true
+
+onlyBuiltDependencies:
+  - node-pty
+  - electron
+  - esbuild
