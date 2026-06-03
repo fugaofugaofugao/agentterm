@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import * as pty from "node-pty";
-import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, captureSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared";
+import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared";
 import { clientRegistry } from "./client-registry";
 
 const relayViewers = new Map<string, Set<WebSocket>>();
@@ -59,10 +59,6 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
     return;
   }
 
-  const snapshot = captureSessionPane(sessionName);
-  if (snapshot && ws.readyState === WebSocket.OPEN) {
-    ws.send(encodeMessage({ type: "output", data: snapshot.replace(/\n/g, "\r\n") + "\r\n" }));
-  }
 
   term.onData((data: string) => {
     if (ws.readyState === WebSocket.OPEN) {

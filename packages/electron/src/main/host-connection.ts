@@ -2,7 +2,7 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { captureSessionPane, createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
+import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
 import { resetSession as resetLocalPtySession } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
@@ -47,11 +47,7 @@ function syncSessions(): void {
 
 function handleRelayAttach(sessionName: string, cols: number, rows: number): void {
   relaySizes.set(sessionName, { cols: cols || 80, rows: rows || 24 })
-  if (relayPtys.has(sessionName)) {
-    const snapshot = captureSessionPane(sessionName)
-    if (snapshot) send({ type: "relay-output", sessionName, data: snapshot.replace(/\n/g, "\r\n") + "\r\n" })
-    return
-  }
+  if (relayPtys.has(sessionName)) return
 
   let term: IPty
   try {
@@ -70,10 +66,6 @@ function handleRelayAttach(sessionName: string, cols: number, rows: number): voi
 
   relayPtys.set(sessionName, term)
 
-  const snapshot = captureSessionPane(sessionName)
-  if (snapshot) {
-    send({ type: "relay-output", sessionName, data: snapshot.replace(/\n/g, "\r\n") + "\r\n" })
-  }
 
   term.onData((data: string) => {
     if (relayPtys.get(sessionName) === term) send({ type: "relay-output", sessionName, data })
