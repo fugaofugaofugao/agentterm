@@ -1,5 +1,5 @@
 {
-  "name": "agentterm-monitor",
+  "name": "agentterm",
   "version": "1.0.0",
   "private": true,
   "description": "Remote monitor and control for Claude Code, Codex, Gemini CLI and AI terminal agents",
@@ -15,11 +15,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-github-username/agentterm-monitor.git"
+    "url": "https://github.com/your-github-username/agentterm.git"
   },
-  "homepage": "https://github.com/your-github-username/agentterm-monitor#readme",
+  "homepage": "https://github.com/your-github-username/agentterm#readme",
   "bugs": {
-    "url": "https://github.com/your-github-username/agentterm-monitor/issues"
+    "url": "https://github.com/your-github-username/agentterm/issues"
   },
   "license": "Apache-2.0"
 }

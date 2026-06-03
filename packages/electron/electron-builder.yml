@@ -1,5 +1,5 @@
-appId: com.agentterm.monitor
-productName: AgentTerm Monitor
+appId: com.agentterm.app
+productName: AgentTerm
 directories:
   output: release
 mac:

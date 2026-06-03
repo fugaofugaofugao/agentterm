@@ -1,8 +1,8 @@
-# AgentTerm Monitor
+# AgentTerm
 
 **Remote monitor and control for Claude Code, Codex, Gemini CLI, and AI terminal agents.**
 
-AgentTerm Monitor is a macOS-first remote terminal monitor and control platform for long-running AI coding agents and terminal tools such as **Claude Code**, **Codex**, **Gemini CLI**, and any tmux-based shell workflow.
+AgentTerm is a macOS-first remote terminal monitor and control platform for long-running AI coding agents and terminal tools such as **Claude Code**, **Codex**, **Gemini CLI**, and any tmux-based shell workflow.
 
 Run your AI terminal sessions on a Host Mac, keep them alive in tmux, and monitor or take over from another Mac, a browser, or a phone.
 
@@ -10,7 +10,7 @@ Run your AI terminal sessions on a Host Mac, keep them alive in tmux, and monito
 
 AI coding agents are most useful when they can keep working for long stretches: refactoring a project, running tests, fixing build failures, watching logs, or iterating on a feature. The problem is that these agents often live inside a terminal on one computer.
 
-AgentTerm Monitor came from the need to continuously monitor tools like Claude Code while away from the desk. With it, you can leave your computer, check the current AI terminal state from a phone or another machine, type follow-up instructions, and let the agent continue project work from anywhere. The goal is simple: free AI-assisted development from one physical workspace.
+AgentTerm came from the need to continuously monitor tools like Claude Code while away from the desk. With it, you can leave your computer, check the current AI terminal state from a phone or another machine, type follow-up instructions, and let the agent continue project work from anywhere. The goal is simple: free AI-assisted development from one physical workspace.
 
 ## Features
 
@@ -20,21 +20,21 @@ AgentTerm Monitor came from the need to continuously monitor tools like Claude C
 - **Bundled tmux runtime** — packaged Electron app includes tmux and terminfo resources for consistent behavior.
 - **Device-aware sessions** — sessions keep their owning device identity to avoid accidentally controlling the wrong machine.
 - **Scrollback support** — browser and Electron terminals can browse tmux history.
-- **Runtime options** — launch at login, keep running in background, and keep the app awake while AgentTerm Monitor is running.
+- **Runtime options** — launch at login, keep running in background, and keep the app awake while AgentTerm is running.
 
 ## How the terminal reliability fixes work
 
-AgentTerm Monitor uses tmux as the source of truth for terminal state. The v1.0.0 terminal fixes focus on making every entry point behave consistently:
+AgentTerm uses tmux as the source of truth for terminal state. The v1.0.0 terminal fixes focus on making every entry point behave consistently:
 
 - A shared tmux runtime helper resolves bundled tmux, terminfo, environment variables, pane capture, copy-mode scrolling, and copy-mode exit logic.
 - Electron local sessions, browser WebSocket sessions, and Client relay sessions all reuse the same tmux helpers.
 - Wheel and touch scrolling are converted into tmux copy-mode scroll commands, so browser and mobile scrollback reads the real tmux history.
-- Before user input is written to a pty, AgentTerm Monitor exits tmux copy-mode so normal typing does not get interpreted as copy-mode control keys.
+- Before user input is written to a pty, AgentTerm exits tmux copy-mode so normal typing does not get interpreted as copy-mode control keys.
 - Device-aware routing keeps Host and Client sessions separate even when sessions share the same name.
 
 ## Architecture
 
-AgentTerm Monitor is a pnpm monorepo:
+AgentTerm is a pnpm monorepo:
 
 ```text
 .
@@ -72,7 +72,7 @@ Core stack:
 
 Use Host mode on the machine that exposes the Web UI and accepts Client connections.
 
-1. Open AgentTerm Monitor.
+1. Open AgentTerm.
 2. Select **Host** during setup.
 3. Create an admin username/password.
 4. Copy the generated Server Key if you want Clients to connect.
@@ -87,7 +87,7 @@ http://your-host:39488
 
 Use Client mode on another Mac whose local tmux sessions should appear on the Host.
 
-1. Open AgentTerm Monitor on the Client machine.
+1. Open AgentTerm on the Client machine.
 2. Select **Client** during setup.
 3. Enter the Host URL and Server Key.
 4. Log in or register a user through the Host.
@@ -95,7 +95,7 @@ Use Client mode on another Mac whose local tmux sessions should appear on the Ho
 
 ## Configuration
 
-AgentTerm Monitor stores real runtime configuration locally. Do **not** commit real config files.
+AgentTerm stores real runtime configuration locally. Do **not** commit real config files.
 
 Use `config.example.yaml` only as a template:
 
@@ -153,10 +153,10 @@ pnpm --filter @termsync/electron package
 
 ## Security notes
 
-- Do not expose AgentTerm Monitor directly to the public Internet without HTTPS, strong passwords, and network access controls.
+- Do not expose AgentTerm directly to the public Internet without HTTPS, strong passwords, and network access controls.
 - Treat Server Keys and JWT secrets as credentials.
 - Rotate secrets if a config file is accidentally shared.
-- AgentTerm Monitor is intended for your own devices and trusted networks.
+- AgentTerm is intended for your own devices and trusted networks.
 
 ## License
 

@@ -62,7 +62,7 @@ export default function Setup({ onComplete }: SetupProps) {
     return (
       <div className="login-page">
         <div className="login-card setup-card">
-          <h1>AgentTerm Monitor</h1>
+          <h1>AgentTerm</h1>
           <p className="setup-subtitle">Choose deployment mode</p>
           <div className="mode-options">
             <button className="mode-btn" onClick={() => setStep("host")}>
@@ -72,7 +72,7 @@ export default function Setup({ onComplete }: SetupProps) {
                 </svg>
               </span>
               <span className="mode-title">Host Mode</span>
-              <span className="mode-desc">Deploy AgentTerm Monitor server on this machine</span>
+              <span className="mode-desc">Deploy AgentTerm server on this machine</span>
             </button>
             <button className="mode-btn" onClick={() => setStep("client")}>
               <span className="mode-icon">
@@ -81,7 +81,7 @@ export default function Setup({ onComplete }: SetupProps) {
                 </svg>
               </span>
               <span className="mode-title">Client Mode</span>
-              <span className="mode-desc">Connect to an existing AgentTerm Monitor server</span>
+              <span className="mode-desc">Connect to an existing AgentTerm server</span>
             </button>
           </div>
         </div>

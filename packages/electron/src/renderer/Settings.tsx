@@ -165,7 +165,7 @@ export default function Settings({ onBack, mode }: SettingsProps) {
           </label>
           <label className="toggle-row">
             <input type="checkbox" checked={keepAwake} onChange={(e) => setKeepAwake(e.target.checked)} />
-            <span>Keep AgentTerm Monitor awake while running</span>
+            <span>Keep AgentTerm awake while running</span>
           </label>
           <p style={{ fontSize: "11px", color: "#8888aa", marginTop: "6px" }}>
             Lock screen is OK, but if macOS enters full sleep network connections will still drop unless keep-awake is enabled.

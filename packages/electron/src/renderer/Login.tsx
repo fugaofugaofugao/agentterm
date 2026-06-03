@@ -38,7 +38,7 @@ export default function Login({ onLogin, onReset }: LoginProps) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1>AgentTerm Monitor</h1>
+        <h1>AgentTerm</h1>
         <form onSubmit={handleSubmit}>
           <input
             type="text"

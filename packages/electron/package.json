@@ -9,8 +9,8 @@
     "package": "electron-vite build && electron-builder --mac"
   },
   "build": {
-    "appId": "com.agentterm.monitor",
-    "productName": "AgentTerm Monitor",
+    "appId": "com.agentterm.app",
+    "productName": "AgentTerm",
     "directories": {
       "output": "dist"
     },

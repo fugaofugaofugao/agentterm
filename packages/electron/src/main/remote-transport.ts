@@ -69,7 +69,7 @@ export async function testConnection(url: string): Promise<{ success: boolean; e
       req.setTimeout(5000, () => { req.destroy(); reject(new Error("Timeout")) })
     })
     if (result.configured !== undefined) return { success: true }
-    return { success: false, error: "Not an AgentTerm Monitor server" }
+    return { success: false, error: "Not an AgentTerm server" }
   } catch (err: any) { return { success: false, error: err.message || "Connection failed" } }
 }
 

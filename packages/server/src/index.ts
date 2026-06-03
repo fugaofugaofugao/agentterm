@@ -305,7 +305,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
   const port = currentConfig.server.port || 39488;
   const host = currentConfig.server.host || "0.0.0.0";
   server.listen(port, host, () => {
-    console.log(`AgentTerm Monitor server running at http://${host}:${port}`);
+    console.log(`AgentTerm server running at http://${host}:${port}`);
   });
 
   return {
