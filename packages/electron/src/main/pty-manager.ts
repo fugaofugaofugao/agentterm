@@ -92,9 +92,11 @@ export function scrollPty(sessionName: string, lines: number): void {
 }
 
 export function resetSession(sessionName: string): void {
+  const size = sessionSizes.get(sessionName)
   onOutput(sessionName, "[3J[2J[H")
   detachSession(sessionName)
-  resetSessionFresh(sessionName)
+  resetSessionFresh(sessionName, undefined, size?.cols, size?.rows)
+  freshSessions.add(sessionName)
 }
 
 export function detachAll(): void {

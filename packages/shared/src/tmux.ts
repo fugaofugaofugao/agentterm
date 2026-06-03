@@ -178,10 +178,27 @@ export function captureSessionPane(name: string, lines = 1000): string {
 export function scrollSessionPane(name: string, lines: number): void {
   if (!Number.isFinite(lines) || lines === 0) return;
   try {
-    if (lines < 0) execTmuxQuiet(["copy-mode", "-u", "-t", name]);
-    const command = lines < 0 ? "scroll-up" : "scroll-down";
     const count = Math.min(Math.max(Math.abs(Math.trunc(lines)), 1), 200);
-    execTmuxQuiet(["send-keys", "-t", name, "-N", String(count), "-X", command]);
+    const state = getSessionScrollState(name);
+
+    if (lines < 0) {
+      // Ignore tiny tmux history created by attach/resize/prompt redraw. Those
+      // few bookkeeping lines are what made a fresh one-line prompt become
+      // [3/3] with duplicate ghost prompts when the user merely nudged upward.
+      if (!state.inCopyMode && state.historySize <= 3) return;
+
+      // Enter copy-mode without the implicit one-page jump from `copy-mode -u`.
+      // `-e` lets tmux leave copy-mode when the view returns to the live screen;
+      // `-H` hides the position badge so it does not look like terminal output.
+      if (!state.inCopyMode) execTmuxQuiet(["copy-mode", "-e", "-H", "-t", name]);
+      execTmuxQuiet(["send-keys", "-t", name, "-N", String(count), "-X", "scroll-up"]);
+      return;
+    }
+
+    if (!state.inCopyMode) return;
+    execTmuxQuiet(["send-keys", "-t", name, "-N", String(count), "-X", "scroll-down"]);
+    const after = getSessionScrollState(name);
+    if (after.scrollPosition <= 0) execTmuxQuiet(["send-keys", "-t", name, "-X", "cancel"]);
   } catch {
   }
 }
