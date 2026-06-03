@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron"
 
-contextBridge.exposeInMainWorld("termSync", {
+contextBridge.exposeInMainWorld("agentTerm", {
   configStatus: () => ipcRenderer.invoke("config:status"),
   configGetMode: () => ipcRenderer.invoke("config:getMode"),
   configSetupHost: (username: string, password: string, port?: number) =>

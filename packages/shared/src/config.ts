@@ -8,7 +8,7 @@ import { AppConfig } from "./types";
 const CONFIG_PATHS = [
   path.join(process.cwd(), "config.yaml"),
   path.join(process.cwd(), "../..", "config.yaml"),
-  path.join(process.env.HOME || "", ".config/agentterm-monitor/config.yaml"),
+  path.join(process.env.HOME || "", ".config/agentterm/config.yaml"),
 ];
 
 export function getConfigPath(): string | null {
@@ -19,7 +19,7 @@ export function getConfigPath(): string | null {
 }
 
 export function getDefaultConfigPath(): string {
-  return path.join(process.env.HOME || "", ".config/agentterm-monitor/config.yaml");
+  return path.join(process.env.HOME || "", ".config/agentterm/config.yaml");
 }
 
 export function isConfigured(): boolean {
@@ -71,7 +71,7 @@ export function resetConfig(): void {
   }
   const electronDataDir = path.join(
     process.env.HOME || "",
-    "Library/Application Support/@agentterm-monitor"
+    "Library/Application Support/@agentterm"
   );
   if (fs.existsSync(electronDataDir)) {
     fs.rmSync(electronDataDir, { recursive: true, force: true });

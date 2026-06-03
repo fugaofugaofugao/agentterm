@@ -148,7 +148,7 @@ pnpm dev:electron
 Package macOS app:
 
 ```bash
-pnpm --filter @termsync/electron package
+pnpm --filter @agentterm/electron package
 ```
 
 ## Security notes

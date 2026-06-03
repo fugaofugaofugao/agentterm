@@ -1,5 +1,5 @@
 (function() {
-  let token = localStorage.getItem('termsync_token');
+  let token = localStorage.getItem('agentterm_token');
   let currentWs = null;
   let terminal = null;
   let fitAddon = null;
@@ -36,14 +36,14 @@
       var data = await res.json();
       if (!res.ok) { $('#login-error').textContent = data.error || 'Login failed'; return; }
       token = data.token;
-      localStorage.setItem('termsync_token', token);
+      localStorage.setItem('agentterm_token', token);
       loadSessions();
     } catch(err) { $('#login-error').textContent = 'Network error'; }
   });
 
   $('#logout-btn').addEventListener('click', function() {
     token = null;
-    localStorage.removeItem('termsync_token');
+    localStorage.removeItem('agentterm_token');
     showPage('#login-page');
   });
 
@@ -52,7 +52,7 @@
     showPage('#sessions-page');
     try {
       var res = await fetch('/api/sessions', { headers: { 'Authorization': 'Bearer ' + token } });
-      if (res.status === 401) { token = null; localStorage.removeItem('termsync_token'); showPage('#login-page'); return; }
+      if (res.status === 401) { token = null; localStorage.removeItem('agentterm_token'); showPage('#login-page'); return; }
       var data = await res.json();
       renderSessions(data.sessions || []);
     } catch(err) { $('#session-list').innerHTML = '<p class="empty-hint">Unable to load sessions</p>'; }

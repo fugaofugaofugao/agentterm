@@ -1,7 +1,7 @@
 import WebSocket from "ws"
 import http from "http"
 import https from "https"
-import { TmuxSession } from "@termsync/shared"
+import { TmuxSession } from "@agentterm/shared"
 
 type OutputCallback = (session: string, data: string, deviceId?: string | null) => void
 type ExitCallback = (session: string, deviceId?: string | null) => void

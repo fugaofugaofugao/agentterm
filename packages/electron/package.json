@@ -1,5 +1,5 @@
 {
-  "name": "@termsync/electron",
+  "name": "@agentterm/electron",
   "version": "1.0.0",
   "private": true,
   "main": "out/main/index.js",
@@ -51,9 +51,9 @@
     "afterPack": "./scripts/sign-tmux.js"
   },
   "dependencies": {
-    "@termsync/shared": "workspace:*",
+    "@agentterm/shared": "workspace:*",
     "node-pty": "^1.1.0",
-    "@termsync/server": "workspace:*"
+    "@agentterm/server": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

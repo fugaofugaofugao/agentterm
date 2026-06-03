@@ -1,6 +1,6 @@
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
-import { getTmuxEnv, getTmuxPath as resolveTmuxPath, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@termsync/shared"
+import { getTmuxEnv, getTmuxPath as resolveTmuxPath, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
 
 const sessions = new Map<string, IPty>()
 const sessionSizes = new Map<string, { cols: number; rows: number }>()

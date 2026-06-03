@@ -5,7 +5,7 @@ import { detachAll } from "./pty-manager"
 import { startEmbeddedServer, stopEmbeddedServer } from "./server-manager"
 import { stopHostConnection } from "./host-connection"
 
-const shared = require("@termsync/shared")
+const shared = require("@agentterm/shared")
 
 let mainWindow: BrowserWindow | null = null
 let powerBlockerId: number | null = null

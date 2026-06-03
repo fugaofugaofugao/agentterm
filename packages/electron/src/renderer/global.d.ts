@@ -11,7 +11,7 @@ interface TmuxSession {
   }
 }
 
-interface TermSyncAPI {
+interface AgentTermAPI {
   configStatus(): Promise<{ configured: boolean }>
   configGetMode(): Promise<{ mode: "host" | "client" | null }>
   configSetupHost(username: string, password: string, port?: number): Promise<{ success: boolean; error?: string; username?: string; server_key?: string }>
@@ -45,5 +45,5 @@ interface TermSyncAPI {
 }
 
 interface Window {
-  termSync: TermSyncAPI
+  agentTerm: AgentTermAPI
 }

@@ -4,7 +4,7 @@ import * as fs from "fs";
 import { TmuxSession } from "./types";
 
 function getProcessResourcesPath(): string | null {
-  const resourcesPath = (process as any).resourcesPath || process.env.TERMSYNC_RESOURCES_PATH;
+  const resourcesPath = (process as any).resourcesPath || process.env.AGENTTERM_RESOURCES_PATH;
   return resourcesPath || null;
 }
 

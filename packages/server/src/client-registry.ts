@@ -1,5 +1,5 @@
 import { WebSocket } from "ws";
-import { SessionInfo, DeviceInfo } from "@termsync/shared";
+import { SessionInfo, DeviceInfo } from "@agentterm/shared";
 
 interface ConnectedClient {
   deviceId: string;

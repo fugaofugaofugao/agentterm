@@ -73,7 +73,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       stopScrollEvent(event)
       const delta = event.deltaY || -event.wheelDelta || 0
       const lines = Math.max(1, Math.round(Math.abs(delta) / linePx))
-      window.termSync.scroll(sessionName, delta > 0 ? lines : -lines, deviceId)
+      window.agentTerm.scroll(sessionName, delta > 0 ? lines : -lines, deviceId)
     }
     const handleTouchStart = (event: TouchEvent) => {
       if (event.touches.length === 1) {
@@ -88,7 +88,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       touchStartY = event.touches[0].clientY
       accumulatedTouch += dy
       while (Math.abs(accumulatedTouch) >= linePx) {
-        window.termSync.scroll(sessionName, accumulatedTouch > 0 ? 1 : -1, deviceId)
+        window.agentTerm.scroll(sessionName, accumulatedTouch > 0 ? 1 : -1, deviceId)
         accumulatedTouch += accumulatedTouch > 0 ? -linePx : linePx
       }
     }
@@ -111,9 +111,9 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       fitAddon.fit()
       if (!attached) {
         attached = true
-        window.termSync.attachSession(sessionName, term.cols, term.rows, deviceId).catch(showError)
+        window.agentTerm.attachSession(sessionName, term.cols, term.rows, deviceId).catch(showError)
       } else {
-        window.termSync.resize(sessionName, term.cols, term.rows, deviceId)
+        window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
       }
     }
 
@@ -121,10 +121,10 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const t2 = setTimeout(doFitAndAttach, 200)
 
     term.onData((data) => {
-      window.termSync.sendInput(sessionName, data, deviceId)
+      window.agentTerm.sendInput(sessionName, data, deviceId)
     })
 
-    const removeOutput = window.termSync.onOutput((session, data, outputDeviceId) => {
+    const removeOutput = window.agentTerm.onOutput((session, data, outputDeviceId) => {
       if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
         term.write(data)
       }
@@ -133,7 +133,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const observer = new ResizeObserver(() => {
       if (failed) return
       fitAddon.fit()
-      window.termSync.resize(sessionName, term.cols, term.rows, deviceId)
+      window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
     })
     observer.observe(containerRef.current)
 
@@ -147,7 +147,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         target.removeEventListener("touchmove", handleTouchMove, { capture: true })
       })
       removeOutput()
-      window.termSync.detachSession(sessionName, deviceId)
+      window.agentTerm.detachSession(sessionName, deviceId)
       term.dispose()
     }
   }, [sessionName, deviceId])

@@ -14,10 +14,10 @@ importers:
 
   packages/electron:
     dependencies:
-      '@termsync/server':
+      '@agentterm/server':
         specifier: workspace:*
         version: link:../server
-      '@termsync/shared':
+      '@agentterm/shared':
         specifier: workspace:*
         version: link:../shared
       node-pty:
@@ -72,7 +72,7 @@ importers:
 
   packages/server:
     dependencies:
-      '@termsync/shared':
+      '@agentterm/shared':
         specifier: workspace:*
         version: link:../shared
       express:

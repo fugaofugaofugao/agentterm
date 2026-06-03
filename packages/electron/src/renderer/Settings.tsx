@@ -24,7 +24,7 @@ export default function Settings({ onBack, mode }: SettingsProps) {
   const [keepAwake, setKeepAwake] = useState(false)
 
   useEffect(() => {
-    window.termSync.configGet().then((config) => {
+    window.agentTerm.configGet().then((config) => {
       if (config) {
         setHost(config.server.host)
         setPort(String(config.server.port))
@@ -33,7 +33,7 @@ export default function Settings({ onBack, mode }: SettingsProps) {
         if (config.remote?.url) setRemoteUrl(config.remote.url)
         if (config.auth?.server_key) setServerKey(config.auth.server_key)
       }
-      window.termSync.runtimeGetSettings().then((runtime) => {
+      window.agentTerm.runtimeGetSettings().then((runtime) => {
         setLaunchAtLogin(!!runtime.launch_at_login)
         setPersistentMode(!!runtime.persistent_mode)
         setKeepAwake(!!runtime.keep_awake)
@@ -63,8 +63,8 @@ export default function Settings({ onBack, mode }: SettingsProps) {
     } else {
       updates.remote = { url: remoteUrl }
     }
-    const result = await window.termSync.configSave(updates)
-    const runtimeResult = await window.termSync.runtimeSaveSettings({ launch_at_login: launchAtLogin, persistent_mode: persistentMode, keep_awake: keepAwake })
+    const result = await window.agentTerm.configSave(updates)
+    const runtimeResult = await window.agentTerm.runtimeSaveSettings({ launch_at_login: launchAtLogin, persistent_mode: persistentMode, keep_awake: keepAwake })
     setSaving(false)
     if (result.success && runtimeResult.success) {
       setMessage({ text: "Settings saved", ok: true })
@@ -80,7 +80,7 @@ export default function Settings({ onBack, mode }: SettingsProps) {
       setConfirmReset(true)
       return
     }
-    await window.termSync.configReset()
+    await window.agentTerm.configReset()
   }
 
   if (loading) return null

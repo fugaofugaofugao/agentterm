@@ -26,15 +26,15 @@ export default function App() {
   const [termKey, setTermKey] = useState(0)
 
   useEffect(() => {
-    window.termSync.configStatus().then((status) => {
+    window.agentTerm.configStatus().then((status) => {
       if (!status.configured) {
         setView("setup")
         return
       }
-      window.termSync.configGetMode().then((m) => {
+      window.agentTerm.configGetMode().then((m) => {
         if (m.mode) setMode(m.mode)
       })
-      window.termSync.checkAuth().then((auth) => {
+      window.agentTerm.checkAuth().then((auth) => {
         if (auth.authenticated) {
           setUser(auth.username)
           setView("main")
@@ -46,7 +46,7 @@ export default function App() {
   }, [])
 
   const refreshSessions = useCallback(async () => {
-    const list = await window.termSync.listSessions()
+    const list = await window.agentTerm.listSessions()
     setSessions(list)
   }, [])
 
@@ -56,14 +56,14 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return
-    const cleanup = window.termSync.onSessionExit(() => {
+    const cleanup = window.agentTerm.onSessionExit(() => {
       refreshSessions()
     })
     return cleanup
   }, [user, refreshSessions])
 
   const handleSetupComplete = (username: string) => {
-    window.termSync.configGetMode().then((m) => {
+    window.agentTerm.configGetMode().then((m) => {
       if (m.mode) setMode(m.mode)
     })
     setUser(username)
@@ -81,15 +81,15 @@ export default function App() {
   }
 
   const handleCreateSession = async (name: string) => {
-    await window.termSync.createSession(name)
+    await window.agentTerm.createSession(name)
     await refreshSessions()
     setActiveSession(name)
-    const cfg = await window.termSync.configGet()
+    const cfg = await window.agentTerm.configGet()
     setActiveDeviceId(cfg?.device_id || null)
   }
 
   const handleKillSession = async (name: string, deviceId: string | null) => {
-    const result = await window.termSync.killSession(name, deviceId)
+    const result = await window.agentTerm.killSession(name, deviceId)
     if (result && result.error) { alert(result.error); return }
     if (activeSession === name && activeDeviceId === deviceId) {
       setActiveSession(null)
@@ -99,7 +99,7 @@ export default function App() {
   }
 
   const handleResetSession = async (name: string, deviceId: string | null) => {
-    const result = await window.termSync.resetSession(name, deviceId)
+    const result = await window.agentTerm.resetSession(name, deviceId)
     if (result && result.error) { alert(result.error); return }
     await refreshSessions()
     setActiveDeviceId(deviceId)
@@ -107,7 +107,7 @@ export default function App() {
   }
 
   const handleLogout = async () => {
-    await window.termSync.logout()
+    await window.agentTerm.logout()
     setUser(null)
     setActiveSession(null)
     setActiveDeviceId(null)

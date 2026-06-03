@@ -1,5 +1,5 @@
 import http from "http"
-import { getBundledTerminfoPath, getTmuxPath } from "@termsync/shared"
+import { getBundledTerminfoPath, getTmuxPath } from "@agentterm/shared"
 
 let serverHandle: { server: http.Server; close: () => void } | null = null
 
@@ -11,7 +11,7 @@ export function startEmbeddedServer(config: any): void {
     process.env.TERMINFO = bundledTerminfo
     process.env.TERMINFO_DIRS = bundledTerminfo
   }
-  const { startServer } = require("@termsync/server")
+  const { startServer } = require("@agentterm/server")
   serverHandle = startServer(config)
   console.log("Embedded server started")
 }

@@ -4,11 +4,11 @@
   "private": true,
   "description": "Remote monitor and control for Claude Code, Codex, Gemini CLI and AI terminal agents",
   "scripts": {
-    "dev:server": "pnpm --filter @termsync/server dev",
-    "dev:electron": "pnpm --filter @termsync/electron dev",
-    "build:server": "pnpm --filter @termsync/server build",
-    "build:electron": "pnpm --filter @termsync/electron build",
-    "build:shared": "pnpm --filter @termsync/shared build"
+    "dev:server": "pnpm --filter @agentterm/server dev",
+    "dev:electron": "pnpm --filter @agentterm/electron dev",
+    "build:server": "pnpm --filter @agentterm/server build",
+    "build:electron": "pnpm --filter @agentterm/electron build",
+    "build:shared": "pnpm --filter @agentterm/shared build"
   },
   "dependencies": {
     "typescript": "^6.0.3"

@@ -5,7 +5,7 @@ import * as remote from "./remote-transport"
 import { startEmbeddedServer, stopEmbeddedServer } from "./server-manager"
 import { startHostConnection, stopHostConnection, triggerSessionSync } from "./host-connection"
 
-const shared = require("@termsync/shared")
+const shared = require("@agentterm/shared")
 
 let authenticatedUser: string | null = null
 let currentMode: "host" | "client" = "host"

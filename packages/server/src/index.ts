@@ -6,8 +6,8 @@ import {
   loadConfig, saveConfig, isConfigured, createDefaultConfig, getHostname,
   verifyUser, findUser, registerUser, verifyServerKey, signToken, verifyToken,
   hashPassword, listSessions,
-} from "@termsync/shared";
-import type { AppConfig, SessionInfo, DeviceInfo, WsMessage } from "@termsync/shared";
+} from "@agentterm/shared";
+import type { AppConfig, SessionInfo, DeviceInfo, WsMessage } from "@agentterm/shared";
 import { handleWsConnection, handleRelayOutput, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl } from "./ws";
 import { clientRegistry } from "./client-registry";
 
@@ -198,7 +198,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       res.json({ ok: true });
       return;
     }
-    const { createSession } = require("@termsync/shared");
+    const { createSession } = require("@agentterm/shared");
     createSession(name);
     res.json({ ok: true });
   });
@@ -213,7 +213,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       res.json({ ok: true });
       return;
     }
-    const { killSession } = require("@termsync/shared");
+    const { killSession } = require("@agentterm/shared");
     killSession(req.params.name);
     res.json({ ok: true });
   });
@@ -228,7 +228,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       res.json({ ok: true });
       return;
     }
-    const { respawnSessionPane } = require("@termsync/shared");
+    const { respawnSessionPane } = require("@agentterm/shared");
     respawnSessionPane(req.params.name);
     res.json({ ok: true });
   });

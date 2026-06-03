@@ -16,7 +16,7 @@ export default function Login({ onLogin, onReset }: LoginProps) {
     e.preventDefault()
     setError("")
     setLoading(true)
-    const result = await window.termSync.login(username, password)
+    const result = await window.agentTerm.login(username, password)
     setLoading(false)
     if (result.success) {
       onLogin(result.username!)
@@ -29,7 +29,7 @@ export default function Login({ onLogin, onReset }: LoginProps) {
     if (!confirm("Reset all configuration? This will clear your host/client setup and restart the app.")) return
     setResetting(true)
     try {
-      await window.termSync.configReset()
+      await window.agentTerm.configReset()
     } catch {
       setResetting(false)
     }

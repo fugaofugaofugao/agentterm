@@ -2,7 +2,7 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { captureSessionPane, createSession, getTmuxEnv, getTmuxPath, killSession, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@termsync/shared"
+import { captureSessionPane, createSession, getTmuxEnv, getTmuxPath, killSession, respawnSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
 import { resetSession as resetLocalPtySession } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()

@@ -26,7 +26,7 @@ export default function Setup({ onComplete }: SetupProps) {
     if (password.length < 4) { setError("Password must be at least 4 characters"); return }
     setLoading(true)
     try {
-      const result = await window.termSync.configSetupHost(username, password, Number(port) || undefined)
+      const result = await window.agentTerm.configSetupHost(username, password, Number(port) || undefined)
       if (result.success) {
         setGeneratedKey(result.server_key || "")
         setStep("host-done")
@@ -45,7 +45,7 @@ export default function Setup({ onComplete }: SetupProps) {
     if (!username.trim() || !password.trim()) { setError("Username and password are required"); return }
     setLoading(true)
     try {
-      const result = await window.termSync.configSetupClient(serverUrl.trim(), serverKey.trim(), username, password)
+      const result = await window.agentTerm.configSetupClient(serverUrl.trim(), serverKey.trim(), username, password)
       if (result.success) onComplete(result.username!)
       else setError(result.error || "Connection failed")
     } catch (err: any) { setError(err.message || "Setup failed") }

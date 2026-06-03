@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import * as pty from "node-pty";
-import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, captureSessionPane, scrollSessionPane, exitSessionCopyMode } from "@termsync/shared";
+import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, captureSessionPane, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared";
 import { clientRegistry } from "./client-registry";
 
 const relayViewers = new Map<string, Set<WebSocket>>();

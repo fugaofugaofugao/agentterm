@@ -6,7 +6,7 @@ const forceExternal = {
   name: "force-external",
   enforce: "pre" as const,
   resolveId(source: string) {
-    const externals = ["node-pty", "@termsync/shared", "@termsync/server", "express", "ws"]
+    const externals = ["node-pty", "@agentterm/shared", "@agentterm/server", "express", "ws"]
     for (const ext of externals) {
       if (source === ext || source.startsWith(ext + "/")) {
         return { id: source, external: true }
