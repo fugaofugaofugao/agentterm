@@ -2,7 +2,7 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
+import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory } from "@agentterm/shared"
 import { resetSession as resetLocalPtySession } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
@@ -26,6 +26,7 @@ const relayPtys = new Map<string, IPty>()
 const relaySizes = new Map<string, { cols: number; rows: number }>()
 const suppressRelayExit = new Set<string>()
 const recentRelayInputs = new Map<string, { data: string; at: number }>()
+const freshRelaySessions = new Set<string>()
 
 function send(msg: any): void {
   if (ws && ws.readyState === WebSocket.OPEN) {
@@ -51,6 +52,10 @@ function handleRelayAttach(sessionName: string, cols: number, rows: number): voi
 
   let term: IPty
   try {
+    if (!sessionExists(sessionName)) {
+      createSession(sessionName, undefined, cols || 80, rows || 24)
+      freshRelaySessions.add(sessionName)
+    }
     term = pty.spawn(tmuxPath, ["new-session", "-A", "-s", sessionName], {
     name: "xterm-256color",
     cols: cols || 80,
@@ -114,9 +119,11 @@ function handleRelayKill(sessionName: string): void {
 }
 
 function handleRelayReset(sessionName: string): void {
+  const size = relaySizes.get(sessionName)
   handleRelayDetach(sessionName)
   send({ type: "relay-clear", sessionName })
-  resetSessionFresh(sessionName)
+  resetSessionFresh(sessionName, undefined, size?.cols, size?.rows)
+  freshRelaySessions.add(sessionName)
   syncSessions()
 }
 

@@ -138,16 +138,27 @@ export function sessionExists(name: string): boolean {
   }
 }
 
-export function createSession(name: string, shell?: string): void {
+export function createSession(name: string, shell?: string, cols?: number, rows?: number): void {
   if (sessionExists(name)) return;
   const home = process.env.HOME || "/";
-  const args = ["new-session", "-d", "-s", name, "-c", home];
+  const args = ["new-session", "-d", "-s", name];
+  if (Number.isFinite(cols) && Number.isFinite(rows) && cols && rows) {
+    args.push("-x", String(Math.max(20, Math.trunc(cols))), "-y", String(Math.max(5, Math.trunc(rows))));
+  }
+  args.push("-c", home);
   if (shell) args.push(shell);
   execTmuxQuiet(args);
 }
 
 export function killSession(name: string): void {
   execTmuxQuiet(["kill-session", "-t", name]);
+}
+
+export function clearSessionHistory(name: string): void {
+  try {
+    execTmuxQuiet(["clear-history", "-t", name]);
+  } catch {
+  }
 }
 
 export function captureSessionPane(name: string, lines = 1000): string {
@@ -177,7 +188,7 @@ export function exitSessionCopyMode(name: string): void {
 }
 
 
-export function resetSessionFresh(name: string, shell?: string): void {
+export function resetSessionFresh(name: string, shell?: string, cols?: number, rows?: number): void {
   try {
     exitSessionCopyMode(name);
   } catch {
@@ -188,14 +199,14 @@ export function resetSessionFresh(name: string, shell?: string): void {
       killSession(name);
     }
     createSession(name, shell);
-    try { execTmuxQuiet(["clear-history", "-t", name]); } catch {}
+    clearSessionHistory(name);
     return;
   } catch {
   }
 
   try {
     respawnSessionPane(name, shell);
-    try { execTmuxQuiet(["clear-history", "-t", name]); } catch {}
+    clearSessionHistory(name)
   } catch {
     try { if (!sessionExists(name)) createSession(name, shell); } catch {}
   }

@@ -12,6 +12,7 @@ interface TerminalProps {
 
 export default function Terminal({ sessionName, deviceId }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const scrollHandleRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -106,11 +107,36 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         accumulatedTouch += accumulatedTouch > 0 ? -linePx : linePx
       }
     }
+    let pointerStartY = 0
+    let pointerAccumulated = 0
+    const handleScrollPointerMove = (event: PointerEvent) => {
+      event.preventDefault()
+      const dy = event.clientY - pointerStartY
+      pointerStartY = event.clientY
+      pointerAccumulated += dy
+      while (Math.abs(pointerAccumulated) >= 6) {
+        queueScroll(pointerAccumulated > 0 ? 2 : -2)
+        pointerAccumulated += pointerAccumulated > 0 ? -6 : 6
+      }
+    }
+    const handleScrollPointerUp = () => {
+      window.removeEventListener("pointermove", handleScrollPointerMove)
+      window.removeEventListener("pointerup", handleScrollPointerUp)
+    }
+    const handleScrollPointerDown = (event: PointerEvent) => {
+      event.preventDefault()
+      pointerStartY = event.clientY
+      pointerAccumulated = 0
+      window.addEventListener("pointermove", handleScrollPointerMove, { passive: false })
+      window.addEventListener("pointerup", handleScrollPointerUp, { once: true })
+    }
     scrollTargets.forEach((target) => {
       target.addEventListener("wheel", handleWheel, { capture: true, passive: false })
       target.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true })
       target.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false })
     })
+    const scrollHandle = scrollHandleRef.current
+    scrollHandle?.addEventListener("pointerdown", handleScrollPointerDown, { passive: false })
 
     let attached = false
     let failed = false
@@ -156,6 +182,9 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       clearTimeout(t2)
       if (scrollFrame) cancelAnimationFrame(scrollFrame)
       observer.disconnect()
+      window.removeEventListener("pointermove", handleScrollPointerMove)
+      window.removeEventListener("pointerup", handleScrollPointerUp)
+      scrollHandle?.removeEventListener("pointerdown", handleScrollPointerDown)
       scrollTargets.forEach((target) => {
         target.removeEventListener("wheel", handleWheel, { capture: true })
         target.removeEventListener("touchstart", handleTouchStart, { capture: true })
@@ -167,5 +196,12 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     }
   }, [sessionName, deviceId])
 
-  return <div ref={containerRef} className="terminal" />
+  return (
+    <div className="terminal-shell">
+      <div ref={containerRef} className="terminal" />
+      <div ref={scrollHandleRef} className="terminal-scroll-handle" title="Drag to scroll terminal history">
+        <div className="terminal-scroll-thumb" />
+      </div>
+    </div>
+  )
 }

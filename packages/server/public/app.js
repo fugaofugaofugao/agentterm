@@ -230,11 +230,46 @@
       }
     }
 
+    var pointerStartY = 0;
+    var pointerAccumulated = 0;
+    function onPointerMove(e) {
+      e.preventDefault();
+      var dy = e.clientY - pointerStartY;
+      pointerStartY = e.clientY;
+      pointerAccumulated += dy;
+      while (Math.abs(pointerAccumulated) >= 6) {
+        queueScroll(pointerAccumulated > 0 ? 2 : -2);
+        pointerAccumulated += pointerAccumulated > 0 ? -6 : 6;
+      }
+    }
+    function onPointerUp() {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    }
+    function onPointerDown(e) {
+      e.preventDefault();
+      pointerStartY = e.clientY;
+      pointerAccumulated = 0;
+      window.addEventListener('pointermove', onPointerMove, { passive: false });
+      window.addEventListener('pointerup', onPointerUp, { once: true });
+    }
+
     targets.forEach(function(target) {
       target.addEventListener('wheel', onWheel, { capture: true, passive: false });
       target.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
       target.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
     });
+    var container = termElement.parentElement;
+    if (container && !container.querySelector('.terminal-scroll-handle')) {
+      var handle = document.createElement('div');
+      handle.className = 'terminal-scroll-handle';
+      handle.title = 'Drag to scroll terminal history';
+      var thumb = document.createElement('div');
+      thumb.className = 'terminal-scroll-thumb';
+      handle.appendChild(thumb);
+      handle.addEventListener('pointerdown', onPointerDown, { passive: false });
+      container.appendChild(handle);
+    }
   }
 
   var TERM_FONT = "'MesloNF', 'Menlo', 'Monaco', 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', monospace";

@@ -1,11 +1,12 @@
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
-import { getTmuxEnv, getTmuxPath as resolveTmuxPath, resetSessionFresh, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared"
+import { getTmuxEnv, getTmuxPath as resolveTmuxPath, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, createSession, clearSessionHistory } from "@agentterm/shared"
 
 const sessions = new Map<string, IPty>()
 const sessionSizes = new Map<string, { cols: number; rows: number }>()
 const suppressExit = new Set<string>()
 const recentInputs = new Map<string, { data: string; at: number }>()
+const freshSessions = new Set<string>()
 const tmuxPath = resolveTmuxPath()
 
 export type OutputCallback = (session: string, data: string) => void
@@ -26,6 +27,10 @@ export function attachSession(sessionName: string, cols = 80, rows = 24): void {
   if (sessions.has(sessionName)) return
 
   try {
+    if (!sessionExists(sessionName)) {
+      createSession(sessionName, undefined, cols, rows)
+      freshSessions.add(sessionName)
+    }
     const term = pty.spawn(tmuxPath, ["new-session", "-A", "-s", sessionName], {
       name: "xterm-256color",
       cols, rows,
@@ -34,6 +39,12 @@ export function attachSession(sessionName: string, cols = 80, rows = 24): void {
     })
 
     sessions.set(sessionName, term)
+    if (freshSessions.has(sessionName)) {
+      setTimeout(() => {
+        if (sessions.get(sessionName) === term) clearSessionHistory(sessionName)
+        freshSessions.delete(sessionName)
+      }, 200)
+    }
     term.onData((data: string) => { if (sessions.get(sessionName) === term) onOutput(sessionName, data) })
     term.onExit(({ exitCode, signal }) => {
       console.log(`pty exit: session=${sessionName} code=${exitCode} signal=${signal} tmux=${tmuxPath}`)
