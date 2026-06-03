@@ -2,7 +2,7 @@ import WebSocket from "ws"
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
-import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory } from "@agentterm/shared"
+import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState } from "@agentterm/shared"
 import { resetSession as resetLocalPtySession } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
@@ -72,6 +72,8 @@ function handleRelayAttach(sessionName: string, cols: number, rows: number): voi
   relayPtys.set(sessionName, term)
 
 
+  sendRelayScrollState(sessionName)
+
   term.onData((data: string) => {
     if (relayPtys.get(sessionName) === term) send({ type: "relay-output", sessionName, data })
   })
@@ -94,9 +96,14 @@ function handleRelayDetach(sessionName: string): void {
 
 function shouldDropDuplicateInput(map: Map<string, { data: string; at: number }>, sessionName: string, data: string): boolean { return false }
 
+function sendRelayScrollState(sessionName: string): void {
+  send({ type: "relay-scroll-state", sessionName, ...getSessionScrollState(sessionName) })
+}
+
 function handleRelayInput(sessionName: string, data: string): void {
   if (relayPtys.has(sessionName)) exitSessionCopyMode(sessionName)
   relayPtys.get(sessionName)?.write(data)
+  sendRelayScrollState(sessionName)
 }
 
 function handleRelayResize(sessionName: string, cols: number, rows: number): void {
@@ -104,12 +111,16 @@ function handleRelayResize(sessionName: string, cols: number, rows: number): voi
 }
 
 function handleRelayScroll(sessionName: string, lines: number): void {
-  if (relayPtys.has(sessionName)) scrollSessionPane(sessionName, lines)
+  if (relayPtys.has(sessionName)) {
+    scrollSessionPane(sessionName, lines)
+    sendRelayScrollState(sessionName)
+  }
 }
 
 function handleRelayCreate(sessionName: string): void {
   createSession(sessionName)
   syncSessions()
+  sendRelayScrollState(sessionName)
 }
 
 function handleRelayKill(sessionName: string): void {

@@ -181,6 +181,25 @@
     var pendingLines = 0;
     var scrollFrame = 0;
     var LINE_PX = 18;
+    var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 };
+    var scrollHandle = null;
+    var scrollThumb = null;
+    function updateScrollThumb() {
+      if (!scrollHandle || !scrollThumb) return;
+      var trackHeight = scrollHandle.clientHeight || 1;
+      var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))));
+      var maxTop = Math.max(0, trackHeight - thumbHeight);
+      var maxScroll = Math.max(1, scrollState.historySize);
+      var ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll));
+      scrollThumb.style.height = thumbHeight + 'px';
+      scrollThumb.style.transform = 'translateY(' + Math.round(maxTop * ratio) + 'px)';
+    }
+    window.__agentTermUpdateScrollState = function(state) {
+      scrollState.scrollPosition = Number(state.scrollPosition || 0);
+      scrollState.historySize = Number(state.historySize || 0);
+      scrollState.paneHeight = Number(state.paneHeight || 0);
+      updateScrollThumb();
+    };
     var targets = [termElement];
     var viewport = termElement.querySelector('.xterm-viewport');
     var screen = termElement.querySelector('.xterm-screen');
@@ -203,6 +222,10 @@
     }
 
     function queueScroll(lines) {
+      if (scrollState.historySize > 0) {
+        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines));
+        updateScrollThumb();
+      }
       pendingLines += lines;
       if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
     }
@@ -231,9 +254,24 @@
     }
 
     var pointerStartY = 0;
+    var pointerStartScroll = 0;
     var pointerAccumulated = 0;
     function onPointerMove(e) {
       e.preventDefault();
+      if (scrollHandle && scrollThumb && scrollState.historySize > 0) {
+        var trackHeight = scrollHandle.clientHeight || 1;
+        var thumbHeight = scrollThumb.clientHeight || 72;
+        var maxTop = Math.max(1, trackHeight - thumbHeight);
+        var dy = e.clientY - pointerStartY;
+        var targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)));
+        var delta = targetScroll - scrollState.scrollPosition;
+        if (delta) {
+          scrollState.scrollPosition = targetScroll;
+          updateScrollThumb();
+          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta));
+        }
+        return;
+      }
       var dy = e.clientY - pointerStartY;
       pointerStartY = e.clientY;
       pointerAccumulated += dy;
@@ -249,6 +287,7 @@
     function onPointerDown(e) {
       e.preventDefault();
       pointerStartY = e.clientY;
+      pointerStartScroll = scrollState.scrollPosition;
       pointerAccumulated = 0;
       window.addEventListener('pointermove', onPointerMove, { passive: false });
       window.addEventListener('pointerup', onPointerUp, { once: true });
@@ -261,14 +300,15 @@
     });
     var container = termElement.parentElement;
     if (container && !container.querySelector('.terminal-scroll-handle')) {
-      var handle = document.createElement('div');
-      handle.className = 'terminal-scroll-handle';
-      handle.title = 'Drag to scroll terminal history';
-      var thumb = document.createElement('div');
-      thumb.className = 'terminal-scroll-thumb';
-      handle.appendChild(thumb);
-      handle.addEventListener('pointerdown', onPointerDown, { passive: false });
-      container.appendChild(handle);
+      scrollHandle = document.createElement('div');
+      scrollHandle.className = 'terminal-scroll-handle';
+      scrollHandle.title = 'Drag to scroll terminal history';
+      scrollThumb = document.createElement('div');
+      scrollThumb.className = 'terminal-scroll-thumb';
+      scrollHandle.appendChild(scrollThumb);
+      scrollHandle.addEventListener('pointerdown', onPointerDown, { passive: false });
+      container.appendChild(scrollHandle);
+      updateScrollThumb();
     }
   }
 
@@ -316,7 +356,7 @@
         brightYellow: '#ffe066', brightBlue: '#5c7cfa', brightMagenta: '#da77f2',
         brightCyan: '#3bc9db', brightWhite: '#f8f9fa',
       },
-      cursorBlink: true, allowProposedApi: true, scrollback: 5000,
+      cursorBlink: true, allowProposedApi: true, scrollback: 0,
     });
 
     fitAddon = new window.FitAddon.FitAddon();
@@ -359,6 +399,8 @@
         if (msg.type === 'clear') {
           terminal.write('\x1b[3J\x1b[2J\x1b[H');
           try { terminal.clear(); terminal.scrollToBottom(); } catch(err) {}
+        } else if (msg.type === 'scroll-state') {
+          if (window.__agentTermUpdateScrollState) window.__agentTermUpdateScrollState(msg);
         } else if (msg.type === 'output' && msg.data) {
           terminal.write(msg.data);
         }

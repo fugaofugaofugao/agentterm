@@ -41,6 +41,7 @@ interface AgentTermAPI {
   scroll(session: string, lines: number, deviceId?: string | null): void
 
   onOutput(callback: (session: string, data: string, deviceId?: string | null) => void): () => void
+  onScrollState(callback: (session: string, state: any, deviceId?: string | null) => void): () => void
   onSessionExit(callback: (session: string, deviceId?: string | null) => void): () => void
 }
 

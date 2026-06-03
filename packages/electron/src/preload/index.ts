@@ -46,6 +46,14 @@ contextBridge.exposeInMainWorld("agentTerm", {
     return () => ipcRenderer.removeListener("terminal:output", handler)
   },
 
+  onScrollState: (callback: (session: string, state: any, deviceId?: string | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: any) => {
+      callback(payload.session, payload, payload.deviceId || null)
+    }
+    ipcRenderer.on("terminal:scroll-state", handler)
+    return () => ipcRenderer.removeListener("terminal:scroll-state", handler)
+  },
+
   onSessionExit: (callback: (session: string) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: { session: string; deviceId?: string | null }) => {
       callback(payload.session, payload.deviceId || null)

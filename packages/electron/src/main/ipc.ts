@@ -55,6 +55,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     sendToRenderer("terminal:exit", { session, deviceId })
   })
 
+  ptyManager.setScrollStateCallback((session, state) => {
+    let deviceId: string | null = null
+    try { deviceId = shared.loadConfig().device_id || null } catch {}
+    sendToRenderer("terminal:scroll-state", { session, deviceId, ...state })
+  })
+
+  remote.setScrollStateCallback((session, state, deviceId) => {
+    sendToRenderer("terminal:scroll-state", { session, deviceId, ...state })
+  })
+
   // --- Config ---
 
   ipcMain.handle("config:status", async () => {

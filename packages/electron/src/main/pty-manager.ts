@@ -1,6 +1,6 @@
 import * as pty from "node-pty"
 import { IPty } from "node-pty"
-import { getTmuxEnv, getTmuxPath as resolveTmuxPath, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, createSession, clearSessionHistory } from "@agentterm/shared"
+import { getTmuxEnv, getTmuxPath as resolveTmuxPath, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, createSession, clearSessionHistory, getSessionScrollState } from "@agentterm/shared"
 
 const sessions = new Map<string, IPty>()
 const sessionSizes = new Map<string, { cols: number; rows: number }>()
@@ -11,12 +11,15 @@ const tmuxPath = resolveTmuxPath()
 
 export type OutputCallback = (session: string, data: string) => void
 export type ExitCallback = (session: string) => void
+export type ScrollStateCallback = (session: string, state: any) => void
 
 let onOutput: OutputCallback = () => {}
 let onExit: ExitCallback = () => {}
+let onScrollState: ScrollStateCallback = () => {}
 
 export function setOutputCallback(cb: OutputCallback): void { onOutput = cb }
 export function setExitCallback(cb: ExitCallback): void { onExit = cb }
+export function setScrollStateCallback(cb: ScrollStateCallback): void { onScrollState = cb }
 export function getTmuxPath(): string { return tmuxPath }
 
 function shouldDropDuplicateInput(sessionName: string, data: string): boolean { return false
@@ -39,9 +42,13 @@ export function attachSession(sessionName: string, cols = 80, rows = 24): void {
     })
 
     sessions.set(sessionName, term)
+    onScrollState(sessionName, getSessionScrollState(sessionName))
     if (freshSessions.has(sessionName)) {
       setTimeout(() => {
-        if (sessions.get(sessionName) === term) clearSessionHistory(sessionName)
+        if (sessions.get(sessionName) === term) {
+          clearSessionHistory(sessionName)
+          onScrollState(sessionName, getSessionScrollState(sessionName))
+        }
         freshSessions.delete(sessionName)
       }, 200)
     }
@@ -69,6 +76,7 @@ export function writeToPty(sessionName: string, data: string): void {
   if (shouldDropDuplicateInput(sessionName, data)) return
   if (sessions.has(sessionName)) exitSessionCopyMode(sessionName)
   sessions.get(sessionName)?.write(data)
+  onScrollState(sessionName, getSessionScrollState(sessionName))
 }
 
 export function resizePty(sessionName: string, cols: number, rows: number): void {
@@ -77,7 +85,10 @@ export function resizePty(sessionName: string, cols: number, rows: number): void
 }
 
 export function scrollPty(sessionName: string, lines: number): void {
-  if (sessions.has(sessionName)) scrollSessionPane(sessionName, lines)
+  if (sessions.has(sessionName)) {
+    scrollSessionPane(sessionName, lines)
+    onScrollState(sessionName, getSessionScrollState(sessionName))
+  }
 }
 
 export function resetSession(sessionName: string): void {

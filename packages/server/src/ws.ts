@@ -1,6 +1,6 @@
 import { WebSocket } from "ws";
 import * as pty from "node-pty";
-import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, scrollSessionPane, exitSessionCopyMode } from "@agentterm/shared";
+import { AppConfig, WsMessage, decodeMessage, encodeMessage, getTmuxPath, getTmuxEnv, scrollSessionPane, exitSessionCopyMode, getSessionScrollState } from "@agentterm/shared";
 import { clientRegistry } from "./client-registry";
 
 const relayViewers = new Map<string, Set<WebSocket>>();
@@ -37,6 +37,12 @@ function sendClear(ws: WebSocket): void {
   }
 }
 
+function sendScrollState(ws: WebSocket, sessionName: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const state = getSessionScrollState(sessionName);
+  ws.send(encodeMessage({ type: "scroll-state", ...state }));
+}
+
 function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfig): void {
   if (!localViewers.has(sessionName)) localViewers.set(sessionName, new Set());
   localViewers.get(sessionName)!.add(ws);
@@ -60,6 +66,8 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
   }
 
 
+  sendScrollState(ws, sessionName);
+
   term.onData((data: string) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(encodeMessage({ type: "output", data }));
@@ -75,13 +83,17 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
         if (msg.data && !shouldDropDuplicateInput(recentLocalInputs, sessionName, msg.data)) {
           exitSessionCopyMode(sessionName);
           term.write(msg.data);
+          sendScrollState(ws, sessionName);
         }
         break;
       case "resize":
         if (msg.cols && msg.rows) term.resize(msg.cols, msg.rows);
         break;
       case "scroll":
-        if (msg.lines) scrollSessionPane(sessionName, msg.lines);
+        if (msg.lines) {
+          scrollSessionPane(sessionName, msg.lines);
+          sendScrollState(ws, sessionName);
+        }
         break;
       case "ping":
         ws.send(encodeMessage({ type: "pong" }));
@@ -208,6 +220,16 @@ export function handleRelayClear(deviceId: string, sessionName: string): void {
   const viewers = relayViewers.get(relayKey);
   if (!viewers) return;
   for (const ws of viewers) sendClear(ws);
+}
+
+export function handleRelayScrollState(deviceId: string, sessionName: string, state: { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean }): void {
+  const relayKey = `${deviceId}:${sessionName}`;
+  const viewers = relayViewers.get(relayKey);
+  if (!viewers) return;
+  const msg = encodeMessage({ type: "scroll-state", ...state });
+  for (const ws of viewers) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  }
 }
 
 export function handleRelayExit(deviceId: string, sessionName: string): void {

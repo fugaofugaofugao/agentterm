@@ -5,18 +5,28 @@ import { TmuxSession } from "@agentterm/shared"
 
 type OutputCallback = (session: string, data: string, deviceId?: string | null) => void
 type ExitCallback = (session: string, deviceId?: string | null) => void
+type ScrollStateCallback = (session: string, state: any, deviceId?: string | null) => void
 
 let token: string | null = null
 let baseUrl: string = ""
 let onOutput: OutputCallback = () => {}
 let onExit: ExitCallback = () => {}
+let onScrollState: ScrollStateCallback = () => {}
 const connections = new Map<string, { ws: WebSocket; name: string; deviceId: string | null }>()
 
 function key(name: string, deviceId?: string | null): string { return `${deviceId || "local"}:${name}` }
 
 export function setOutputCallback(cb: OutputCallback): void { onOutput = cb }
 export function setExitCallback(cb: ExitCallback): void { onExit = cb }
+export function setScrollStateCallback(cb: ScrollStateCallback): void { onScrollState = cb }
 export function configure(url: string, authToken: string): void { baseUrl = url.replace(/\/$/, ""); token = authToken }
+
+function formatApiError(statusCode: number | undefined, data: any, fallback: string): Error {
+  const detail = typeof data === "string" ? data : (data?.message || data?.detail || data?.error || data?.title)
+  const retryAfter = typeof data === "object" && data?.retry_after ? ` Retry after ${data.retry_after}s.` : ""
+  const cf = typeof data === "object" && (data?.cloudflare_error || data?.error_code === 524) ? " Cloudflare reported an origin timeout." : ""
+  return new Error(`${fallback}${statusCode ? ` (HTTP ${statusCode})` : ""}${detail ? `: ${detail}` : ""}${cf}${retryAfter}`)
+}
 
 function apiRequest(method: string, path: string, body?: any): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -28,8 +38,17 @@ function apiRequest(method: string, path: string, body?: any): Promise<any> {
     const req = mod.request(url, { method, headers }, (res) => {
       let data = ""
       res.on("data", (chunk) => { data += chunk })
-      res.on("end", () => { try { resolve(JSON.parse(data)) } catch { resolve(data) } })
+      res.on("end", () => {
+        let parsed: any = data
+        try { parsed = data ? JSON.parse(data) : {} } catch {}
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(formatApiError(res.statusCode, parsed, `${method} ${path} failed`))
+          return
+        }
+        resolve(parsed)
+      })
     })
+    req.setTimeout(30000, () => { req.destroy(new Error(`${method} ${path} timed out after 30s`)) })
     req.on("error", reject)
     if (body) req.write(JSON.stringify(body))
     req.end()
@@ -93,6 +112,7 @@ export function attachSession(name: string, cols = 80, rows = 24, deviceId?: str
     try {
       const msg = JSON.parse(raw.toString())
       if (msg.type === "clear") onOutput(name, "[3J[2J[H", deviceId || null)
+      else if (msg.type === "scroll-state") onScrollState(name, msg, deviceId || null)
       else if (msg.type === "output" && msg.data) onOutput(name, msg.data, deviceId || null)
     } catch {}
   })

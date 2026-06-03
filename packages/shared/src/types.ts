@@ -70,6 +70,7 @@ export type WsMessageType =
   | "resize"
   | "scroll"
   | "clear"
+  | "scroll-state"
   | "ping"
   | "pong"
   | "client-hello"
@@ -79,6 +80,7 @@ export type WsMessageType =
   | "relay-input"
   | "relay-output"
   | "relay-clear"
+  | "relay-scroll-state"
   | "relay-resize"
   | "relay-scroll"
   | "relay-create"
@@ -98,4 +100,8 @@ export interface WsMessage {
   token?: string;
   sessionName?: string;
   sessions?: SessionInfo[];
+  scrollPosition?: number;
+  historySize?: number;
+  paneHeight?: number;
+  inCopyMode?: boolean;
 }

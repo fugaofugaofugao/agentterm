@@ -3,6 +3,13 @@ import * as path from "path";
 import * as fs from "fs";
 import { TmuxSession } from "./types";
 
+export interface TmuxScrollState {
+  scrollPosition: number;
+  historySize: number;
+  paneHeight: number;
+  inCopyMode: boolean;
+}
+
 function getProcessResourcesPath(): string | null {
   const resourcesPath = (process as any).resourcesPath || process.env.AGENTTERM_RESOURCES_PATH;
   return resourcesPath || null;
@@ -179,6 +186,21 @@ export function scrollSessionPane(name: string, lines: number): void {
   }
 }
 
+export function getSessionScrollState(name: string): TmuxScrollState {
+  try {
+    const out = execTmux(["display-message", "-p", "-t", name, "#{scroll_position}|#{history_size}|#{pane_height}|#{pane_in_mode}"]).trim();
+    const [scrollPosition, historySize, paneHeight, inCopyMode] = out.split("|");
+    return {
+      scrollPosition: Math.max(0, parseInt(scrollPosition || "0", 10) || 0),
+      historySize: Math.max(0, parseInt(historySize || "0", 10) || 0),
+      paneHeight: Math.max(0, parseInt(paneHeight || "0", 10) || 0),
+      inCopyMode: inCopyMode === "1",
+    };
+  } catch {
+    return { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false };
+  }
+}
+
 export function exitSessionCopyMode(name: string): void {
   try {
     const inMode = execTmux(["display-message", "-p", "-t", name, "#{pane_in_mode}"]).trim();
@@ -198,7 +220,7 @@ export function resetSessionFresh(name: string, shell?: string, cols?: number, r
     if (sessionExists(name)) {
       killSession(name);
     }
-    createSession(name, shell);
+    createSession(name, shell, cols, rows);
     clearSessionHistory(name);
     return;
   } catch {
@@ -208,7 +230,7 @@ export function resetSessionFresh(name: string, shell?: string, cols?: number, r
     respawnSessionPane(name, shell);
     clearSessionHistory(name)
   } catch {
-    try { if (!sessionExists(name)) createSession(name, shell); } catch {}
+    try { if (!sessionExists(name)) createSession(name, shell, cols, rows); } catch {}
   }
 }
 

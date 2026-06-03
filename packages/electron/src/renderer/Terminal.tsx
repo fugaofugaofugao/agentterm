@@ -13,6 +13,7 @@ interface TerminalProps {
 export default function Terminal({ sessionName, deviceId }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const scrollHandleRef = useRef<HTMLDivElement>(null)
+  const scrollThumbRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -23,7 +24,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 5000,
+      scrollback: 0,
       theme: {
         background: "#1a1a2e",
         foreground: "#e0e0e0",
@@ -67,6 +68,19 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     let pendingScrollLines = 0
     let scrollFrame = 0
     const linePx = 18
+    const scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0 }
+    const updateScrollThumb = () => {
+      const handle = scrollHandleRef.current
+      const thumb = scrollThumbRef.current
+      if (!handle || !thumb) return
+      const trackHeight = handle.clientHeight
+      const thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, scrollState.paneHeight / Math.max(scrollState.historySize + scrollState.paneHeight, 1))))))
+      const maxTop = Math.max(0, trackHeight - thumbHeight)
+      const maxScroll = Math.max(1, scrollState.historySize)
+      const ratio = 1 - Math.max(0, Math.min(1, scrollState.scrollPosition / maxScroll))
+      thumb.style.height = thumbHeight + "px"
+      thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`
+    }
     const flushScroll = () => {
       scrollFrame = 0
       if (!pendingScrollLines) return
@@ -76,6 +90,10 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       if (pendingScrollLines) scrollFrame = requestAnimationFrame(flushScroll)
     }
     const queueScroll = (lines: number) => {
+      if (scrollState.historySize > 0) {
+        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines))
+        updateScrollThumb()
+      }
       pendingScrollLines += lines
       if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll)
     }
@@ -108,9 +126,26 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       }
     }
     let pointerStartY = 0
+    let pointerStartScroll = 0
     let pointerAccumulated = 0
     const handleScrollPointerMove = (event: PointerEvent) => {
       event.preventDefault()
+      const handle = scrollHandleRef.current
+      const thumb = scrollThumbRef.current
+      if (handle && thumb && scrollState.historySize > 0) {
+        const trackHeight = handle.clientHeight
+        const thumbHeight = thumb.clientHeight || 72
+        const maxTop = Math.max(1, trackHeight - thumbHeight)
+        const dy = event.clientY - pointerStartY
+        const targetScroll = Math.max(0, Math.min(scrollState.historySize, pointerStartScroll - Math.round((dy / maxTop) * scrollState.historySize)))
+        const delta = targetScroll - scrollState.scrollPosition
+        if (delta) {
+          scrollState.scrollPosition = targetScroll
+          updateScrollThumb()
+          queueScroll(delta > 0 ? -Math.abs(delta) : Math.abs(delta))
+        }
+        return
+      }
       const dy = event.clientY - pointerStartY
       pointerStartY = event.clientY
       pointerAccumulated += dy
@@ -126,6 +161,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     const handleScrollPointerDown = (event: PointerEvent) => {
       event.preventDefault()
       pointerStartY = event.clientY
+      pointerStartScroll = scrollState.scrollPosition
       pointerAccumulated = 0
       window.addEventListener("pointermove", handleScrollPointerMove, { passive: false })
       window.addEventListener("pointerup", handleScrollPointerUp, { once: true })
@@ -169,6 +205,15 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         term.write(data)
       }
     })
+    const removeScrollState = window.agentTerm.onScrollState((session, state, outputDeviceId) => {
+      if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
+        scrollState.scrollPosition = Number(state.scrollPosition || 0)
+        scrollState.historySize = Number(state.historySize || 0)
+        scrollState.paneHeight = Number(state.paneHeight || 0)
+        updateScrollThumb()
+      }
+    })
+    requestAnimationFrame(updateScrollThumb)
 
     const observer = new ResizeObserver(() => {
       if (failed) return
@@ -191,6 +236,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
         target.removeEventListener("touchmove", handleTouchMove, { capture: true })
       })
       removeOutput()
+      removeScrollState()
       window.agentTerm.detachSession(sessionName, deviceId)
       term.dispose()
     }
@@ -200,7 +246,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     <div className="terminal-shell">
       <div ref={containerRef} className="terminal" />
       <div ref={scrollHandleRef} className="terminal-scroll-handle" title="Drag to scroll terminal history">
-        <div className="terminal-scroll-thumb" />
+        <div ref={scrollThumbRef} className="terminal-scroll-thumb" />
       </div>
     </div>
   )

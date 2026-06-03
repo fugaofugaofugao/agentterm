@@ -8,7 +8,7 @@ import {
   hashPassword, listSessions,
 } from "@agentterm/shared";
 import type { AppConfig, SessionInfo, DeviceInfo, WsMessage } from "@agentterm/shared";
-import { handleWsConnection, handleRelayOutput, handleRelayClear, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl, broadcastLocalClear } from "./ws";
+import { handleWsConnection, handleRelayOutput, handleRelayClear, handleRelayScrollState, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl, broadcastLocalClear } from "./ws";
 import { clientRegistry } from "./client-registry";
 
 function decodeRelayMessage(raw: string): WsMessage | null {
@@ -20,6 +20,11 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
   const server = http.createServer(app);
 
   app.use(express.json());
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!err) { next(); return; }
+    const message = err?.type === "entity.parse.failed" ? "Invalid JSON request body" : (err?.message || "Request failed");
+    res.status(err?.status || 400).json({ error: "bad_request", message });
+  });
   const fs = require("fs");
   const resourcesPublic = (process as any).resourcesPath ? path.join((process as any).resourcesPath, "server-public") : null;
   const publicDir = (resourcesPublic && fs.existsSync(resourcesPublic)) ? resourcesPublic : path.join(__dirname, "../public");
@@ -287,6 +292,11 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
         case "relay-clear":
           if (registeredDeviceId && msg.sessionName) {
             handleRelayClear(registeredDeviceId, msg.sessionName);
+          }
+          break;
+        case "relay-scroll-state":
+          if (registeredDeviceId && msg.sessionName) {
+            handleRelayScrollState(registeredDeviceId, msg.sessionName, msg);
           }
           break;
         case "relay-exit":

@@ -82,10 +82,15 @@ export default function App() {
 
   const handleCreateSession = async (name: string) => {
     await window.agentTerm.createSession(name)
-    await refreshSessions()
-    setActiveSession(name)
     const cfg = await window.agentTerm.configGet()
-    setActiveDeviceId(cfg?.device_id || null)
+    const deviceId = cfg?.device_id || null
+    setSessions((prev) => prev.some((s) => s.name === name && (s.device?.id || null) === deviceId) ? prev : [
+      ...prev,
+      { name, windows: 1, created: new Date().toISOString(), attached: true, owner: user || "", device: { id: deviceId || "host", name: "Local", type: "host" } }
+    ])
+    setActiveSession(name)
+    setActiveDeviceId(deviceId)
+    setTimeout(refreshSessions, 600)
   }
 
   const handleKillSession = async (name: string, deviceId: string | null) => {
