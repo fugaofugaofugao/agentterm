@@ -47,6 +47,12 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     sendToRenderer("terminal:exit", { session, deviceId })
   })
 
+  ptyManager.setClearCallback((session) => {
+    let deviceId: string | null = null
+    try { deviceId = shared.loadConfig().device_id || null } catch {}
+    sendToRenderer("terminal:clear", { session, deviceId })
+  })
+
   remote.setOutputCallback((session, data, deviceId) => {
     sendToRenderer("terminal:output", { session, data, deviceId })
   })
@@ -63,6 +69,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
 
   remote.setScrollStateCallback((session, state, deviceId) => {
     sendToRenderer("terminal:scroll-state", { session, deviceId, ...state })
+  })
+
+  ptyManager.setSizeCallback((session, size) => {
+    let deviceId: string | null = null
+    try { deviceId = shared.loadConfig().device_id || null } catch {}
+    sendToRenderer("terminal:size", { session, deviceId, ...size })
+  })
+
+  remote.setSizeCallback((session, size, deviceId) => {
+    sendToRenderer("terminal:size", { session, deviceId, ...size })
   })
 
   // --- Config ---
@@ -336,7 +352,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       remote.detachSession(name, deviceId)
       return result?.error ? { success: false, error: result.error } : { success: true }
     }
-    ptyManager.detachSession(name)
+    ptyManager.forceDetachSession(name)
     shared.killSession(name)
     if (currentMode === "client") triggerSessionSync()
     return { success: true }
@@ -369,7 +385,17 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         }
         return remote.attachSession(name, cols, rows, deviceId)
       }
-      ptyManager.attachSession(name, cols, rows)
+      ptyManager.attachSession(name, cols, rows, "renderer")
+      if (process.platform === "win32") {
+        const buffered = ptyManager.getBufferedOutput(name)
+        if (buffered) {
+          const deviceIdForOutput = localDeviceId
+          sendToRenderer("terminal:clear", { session: name, deviceId: deviceIdForOutput })
+          for (let i = 0; i < buffered.length; i += 8192) {
+            sendToRenderer("terminal:output", { session: name, data: buffered.slice(i, i + 8192), deviceId: deviceIdForOutput })
+          }
+        }
+      }
     } catch (err: any) {
       console.error("terminal:attach error:", err)
       throw new Error(err?.message || "Failed to attach terminal")
@@ -379,7 +405,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle("terminal:detach", async (_event: Electron.IpcMainInvokeEvent, name: string, deviceId?: string | null) => {
     const localDeviceId = (() => { try { return shared.loadConfig().device_id || null } catch { return null } })()
     if (deviceId && deviceId !== localDeviceId) remote.detachSession(name, deviceId)
-    else ptyManager.detachSession(name)
+    else ptyManager.detachSession(name, "renderer")
   })
 
   ipcMain.on("terminal:input", (_event: Electron.IpcMainEvent, session: string, data: string, deviceId?: string | null) => {
@@ -389,9 +415,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     ptyManager.writeToPty(session, data)
   })
 
-  ipcMain.on("terminal:resize", (_event: Electron.IpcMainEvent, session: string, cols: number, rows: number, deviceId?: string | null) => {
+  ipcMain.on("terminal:resize", (_event: Electron.IpcMainEvent, session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string) => {
     const localDeviceId = (() => { try { return shared.loadConfig().device_id || null } catch { return null } })()
-    if (deviceId && deviceId !== localDeviceId) { remote.resizePty(session, cols, rows, deviceId); return }
+    if (deviceId && deviceId !== localDeviceId) { remote.resizePty(session, cols, rows, deviceId, clientId); return }
+    ptyManager.resizePty(session, cols, rows)
+  })
+
+  ipcMain.on("terminal:resize-intent", (_event: Electron.IpcMainEvent, session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string) => {
+    const localDeviceId = (() => { try { return shared.loadConfig().device_id || null } catch { return null } })()
+    if (deviceId && deviceId !== localDeviceId) { remote.resizeIntent(session, cols, rows, deviceId, clientId); return }
     ptyManager.resizePty(session, cols, rows)
   })
 

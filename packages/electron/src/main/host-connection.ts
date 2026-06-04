@@ -4,7 +4,7 @@ import { IPty } from "node-pty"
 import * as os from "os"
 import * as path from "path"
 import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState, configureAgentTermSession } from "@agentterm/shared"
-import { resetSession as resetLocalPtySession, attachSession as attachLocalPtySession, writeToPty as writeToLocalPty, resizePty as resizeLocalPty, scrollPty as scrollLocalPty, addOutputListener as addLocalOutputListener, addExitListener as addLocalExitListener } from "./pty-manager"
+import { resetSession as resetLocalPtySession, attachSession as attachLocalPtySession, writeToPty as writeToLocalPty, resizePty as resizeLocalPty, scrollPty as scrollLocalPty, addOutputListener as addLocalOutputListener, addExitListener as addLocalExitListener, isAttached as isLocalPtyAttached, getSessionSize as getLocalPtySize } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
 
@@ -59,18 +59,29 @@ function syncSessions(): void {
   send({ type: "session-sync", sessions: enriched })
 }
 
-function handleRelayAttach(sessionName: string, cols: number, rows: number): void {
-  relaySizes.set(sessionName, { cols: cols || 80, rows: rows || 24 })
-  if (relayPtys.has(sessionName) || relayLocalPtys.has(sessionName)) return
+function sendRelayTerminalSize(sessionName: string, passive = true, controllerId?: string, sourceClientId?: string): void {
+  const size = getLocalPtySize(sessionName) || relaySizes.get(sessionName) || { cols: 80, rows: 24 }
+  send({ type: "terminal-size", sessionName, cols: size.cols, rows: size.rows, revision: (size as any).revision || 0, controllerId, sourceClientId, role: passive ? "observer" : "controller", passive })
+}
+
+function handleRelayAttach(sessionName: string, cols?: number, rows?: number): void {
+  const requestedSize = { cols: Math.max(20, Math.trunc(Number(cols) || 80)), rows: Math.max(5, Math.trunc(Number(rows) || 24)) }
+  relaySizes.set(sessionName, getLocalPtySize(sessionName) || requestedSize)
+  if (relayPtys.has(sessionName) || relayLocalPtys.has(sessionName)) {
+    if (process.platform === "win32") sendRelayTerminalSize(sessionName, true)
+    return
+  }
 
   if (process.platform === "win32") {
     try {
+      const wasAttached = isLocalPtyAttached(sessionName)
       if (!sessionExists(sessionName)) {
-        createSession(sessionName, undefined, cols || 80, rows || 24)
+        createSession(sessionName, undefined, requestedSize.cols, requestedSize.rows)
         freshRelaySessions.add(sessionName)
       }
       relayLocalPtys.add(sessionName)
-      attachLocalPtySession(sessionName, cols || 80, rows || 24)
+      attachLocalPtySession(sessionName, requestedSize.cols, requestedSize.rows, "relay", { resize: !wasAttached })
+      sendRelayTerminalSize(sessionName, true)
       const removeOutput = addLocalOutputListener((session, data) => {
         if (session === sessionName && relayLocalPtys.has(sessionName)) send({ type: "relay-output", sessionName, data })
       })
@@ -136,6 +147,7 @@ function handleRelayDetach(sessionName: string): void {
   if (relayLocalPtys.delete(sessionName)) {
     relayLocalCleanups.get(sessionName)?.forEach((cleanup) => cleanup())
     relayLocalCleanups.delete(sessionName)
+    detachLocalPtySession(sessionName, "relay")
     return
   }
   const term = relayPtys.get(sessionName)
@@ -158,8 +170,21 @@ function handleRelayInput(sessionName: string, data: string): void {
   sendRelayScrollState(sessionName)
 }
 
-function handleRelayResize(sessionName: string, cols: number, rows: number): void {
-  if (relayLocalPtys.has(sessionName)) { resizeLocalPty(sessionName, cols, rows); return }
+function handleRelayResizeIntent(sessionName: string, cols: number, rows: number, clientId?: string): void {
+  if (relayLocalPtys.has(sessionName)) {
+    resizeLocalPty(sessionName, cols, rows)
+    sendRelayTerminalSize(sessionName, false, clientId, clientId)
+    return
+  }
+  relayPtys.get(sessionName)?.resize(cols, rows)
+}
+
+function handleRelayResize(sessionName: string, cols: number, rows: number, clientId?: string): void {
+  if (relayLocalPtys.has(sessionName)) {
+    resizeLocalPty(sessionName, cols, rows)
+    sendRelayTerminalSize(sessionName, false, clientId, clientId)
+    return
+  }
   relayPtys.get(sessionName)?.resize(cols, rows)
 }
 
@@ -230,8 +255,11 @@ function connect(): void {
         case "relay-input":
           handleRelayInput(msg.sessionName, msg.data)
           break
+        case "resize-intent":
+          handleRelayResizeIntent(msg.sessionName, msg.cols, msg.rows, msg.clientId)
+          break
         case "relay-resize":
-          handleRelayResize(msg.sessionName, msg.cols, msg.rows)
+          handleRelayResize(msg.sessionName, msg.cols, msg.rows, msg.clientId)
           break
         case "relay-scroll":
           handleRelayScroll(msg.sessionName, msg.lines)

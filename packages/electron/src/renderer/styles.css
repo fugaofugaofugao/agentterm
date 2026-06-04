@@ -136,11 +136,16 @@ html, body, #root {
 .sidebar-user { font-size: 12px; color: #8888aa; }
 
 /* Terminal */
-.terminal-container { -webkit-app-region: no-drag; flex: 1; display: flex; overflow: hidden; min-height: 0; }
-.terminal-shell { flex: 1; min-height: 0; position: relative; display: flex; overflow: hidden; }
-.terminal { flex: 1; padding: 4px 14px 4px 4px; min-height: 0; overflow: hidden; }
-.terminal .xterm { height: 100%; }
-.terminal .xterm-viewport { overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
+.terminal-container { -webkit-app-region: no-drag; flex: 1; display: flex; overflow: hidden; min-height: 0; min-width: 0; }
+.terminal-shell { flex: 1; min-height: 0; min-width: 0; max-width: 100%; position: relative; display: flex; overflow: hidden; background: #1a1a2e; }
+.terminal { flex: 1; padding: 4px 14px 4px 4px; min-height: 0; min-width: 0; max-width: 100%; overflow: hidden; background: #1a1a2e; }
+.terminal .xterm { height: 100%; width: 100%; max-width: 100%; overflow: hidden; background: #1a1a2e; }
+.terminal .xterm-screen { max-width: 100%; overflow: hidden; background: #1a1a2e; }
+.terminal .xterm-rows { max-width: 100%; }
+.terminal .xterm-viewport { overflow-y: auto !important; overflow-x: hidden !important; -webkit-overflow-scrolling: touch; }
+.terminal .xterm-helpers { overflow: visible !important; max-width: 100%; }
+.terminal .xterm-helper-textarea { opacity: 0.01 !important; overflow: hidden !important; resize: none !important; width: 2px !important; height: 1em !important; max-width: 2px !important; max-height: 1em !important; margin-top: 1.6em !important; transform: none !important; }
+.terminal .composition-view, .terminal .xterm-composition-view { max-width: calc(100vw - 32px) !important; overflow: hidden !important; white-space: pre-wrap !important; word-break: break-all !important; }
 .terminal-scroll-handle { position: absolute; top: 10px; right: 3px; bottom: 10px; width: 10px; border-radius: 999px; background: rgba(255,255,255,0.04); cursor: ns-resize; touch-action: none; z-index: 5; }
 .terminal-scroll-thumb { position: absolute; top: 0; left: 2px; right: 2px; height: 72px; min-height: 44px; border-radius: 999px; background: rgba(0, 212, 255, 0.38); box-shadow: 0 0 0 1px rgba(0,212,255,0.16); }
 .terminal-scroll-handle:hover .terminal-scroll-thumb, .terminal-scroll-handle:active .terminal-scroll-thumb { background: rgba(0, 212, 255, 0.72); }

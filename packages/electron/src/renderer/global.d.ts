@@ -37,12 +37,15 @@ interface AgentTermAPI {
   attachSession(name: string, cols?: number, rows?: number, deviceId?: string | null): Promise<void>
   detachSession(name: string, deviceId?: string | null): Promise<void>
   sendInput(session: string, data: string, deviceId?: string | null): void
-  resize(session: string, cols: number, rows: number, deviceId?: string | null): void
+  resize(session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string): void
+  resizeIntent(session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string): void
   scroll(session: string, lines: number, deviceId?: string | null): void
 
   onOutput(callback: (session: string, data: string, deviceId?: string | null) => void): () => void
   onScrollState(callback: (session: string, state: any, deviceId?: string | null) => void): () => void
   onSessionExit(callback: (session: string, deviceId?: string | null) => void): () => void
+  onClear(callback: (session: string, deviceId?: string | null) => void): () => void
+  onSize(callback: (session: string, size: any, deviceId?: string | null) => void): () => void
 }
 
 interface Window {

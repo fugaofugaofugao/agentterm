@@ -25,6 +25,7 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 5000,
+      customGlyphs: false,
       theme: {
         background: "#1a1a2e",
         foreground: "#e0e0e0",
@@ -56,6 +57,12 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     term.unicode.activeVersion = "11"
 
     term.open(containerRef.current)
+
+    const requestControl = () => { try { sendResizeIntent() } catch {} }
+    containerRef.current.addEventListener("focusin", requestControl)
+    containerRef.current.addEventListener("pointerdown", requestControl, { passive: true })
+
+    let failed = false
 
     const termElement = containerRef.current.querySelector(".xterm") as HTMLElement | null
     const scrollTargets = [
@@ -93,6 +100,33 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
       thumb.style.height = thumbHeight + "px"
       thumb.style.transform = `translateY(${Math.round(maxTop * ratio)}px)`
     }
+    const fitIfVisible = () => {
+      const container = containerRef.current
+      if (!container || container.clientWidth <= 0 || container.clientHeight <= 0) return false
+      try { fitAddon.fit(); return true } catch { return false }
+    }
+    const refreshTerminalView = (scrollToBottom = false, allowFit = false) => {
+      requestAnimationFrame(() => {
+        if (failed) return
+        if (allowFit && resizeRole === "controller") fitIfVisible()
+        if (scrollToBottom) { try { term.scrollToBottom() } catch {} }
+        try { (term as any).refresh?.(0, Math.max(0, term.rows - 1)) } catch {}
+        requestAnimationFrame(updateScrollThumb)
+      })
+    }
+    const stabilizeImeLayout = () => {
+      requestAnimationFrame(() => {
+        if (failed) return
+        if (resizeRole === "controller") {
+          const fitted = fitIfVisible()
+          if (fitted) scheduleControllerResize()
+        }
+        refreshTerminalView(false)
+      })
+    }
+    const helperTextarea = containerRef.current.querySelector(".xterm-helper-textarea") as HTMLTextAreaElement | null
+    const compositionEvents = ["compositionstart", "compositionupdate", "compositionend", "input"] as const
+    compositionEvents.forEach((eventName) => helperTextarea?.addEventListener(eventName, stabilizeImeLayout))
     const flushScroll = () => {
       scrollFrame = 0
       if (!pendingScrollLines) return
@@ -196,36 +230,98 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     scrollHandle?.addEventListener("pointerdown", handleScrollPointerDown, { passive: false })
 
     let attached = false
-    let failed = false
+    const clientId = `electron:${deviceId || "local"}:${sessionName}:${Date.now()}`
+    let resizeRole: "controller" | "observer" = "controller"
+    let knownRevision = 0
+    let applyingRemoteSize = false
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null
+    let lastSentSize = ""
+    let writeQueue: string[] = []
+    let writing = false
+    const pumpWriteQueue = () => {
+      if (writing || !writeQueue.length) return
+      const chunk = writeQueue.shift() || ""
+      writing = true
+      term.write(chunk, () => {
+        writing = false
+        refreshTerminalView(false)
+        pumpWriteQueue()
+      })
+    }
+    const enqueueWrite = (data: string) => {
+      if (!data) return
+      const maxChunk = 8192
+      for (let i = 0; i < data.length; i += maxChunk) writeQueue.push(data.slice(i, i + maxChunk))
+      pumpWriteQueue()
+    }
+    const clearTerminal = () => {
+      writeQueue = []
+      writing = false
+      try { term.clear() } catch {}
+      try { term.reset() } catch {}
+      term.write("[3J[2J[H", () => refreshTerminalView(true))
+    }
     const showError = (err: any) => {
       failed = true
       const message = err?.message || String(err) || "Unknown error"
       term.writeln("\r\n\x1b[31mFailed to attach session:\x1b[0m " + message)
       term.writeln("\x1b[90mThe session view will stay open so this error can be read.\x1b[0m")
     }
+    const sendResizeIntent = () => {
+      if (failed || applyingRemoteSize || !fitIfVisible()) return
+      resizeRole = "controller"
+      try { window.agentTerm.resizeIntent(sessionName, term.cols, term.rows, deviceId, clientId) } catch {}
+    }
+    const sendControllerResize = () => {
+      if (failed || applyingRemoteSize || resizeRole !== "controller" || !fitIfVisible()) return
+      const sizeKey = `${term.cols}x${term.rows}`
+      if (sizeKey === lastSentSize) return
+      lastSentSize = sizeKey
+      try { window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId, clientId) } catch {}
+    }
+    const scheduleControllerResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(sendControllerResize, 100)
+    }
     const doFitAndAttach = () => {
-      if (failed) return
-      fitAddon.fit()
+      if (failed || !fitIfVisible()) return
       if (!attached) {
         attached = true
-        window.agentTerm.attachSession(sessionName, term.cols, term.rows, deviceId).catch(showError)
+        window.agentTerm.attachSession(sessionName, term.cols, term.rows, deviceId)
+          .then(() => { sendResizeIntent(); refreshTerminalView(true, false) })
+          .catch(showError)
       } else {
-        window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
-      requestAnimationFrame(updateScrollThumb)
+        scheduleControllerResize()
+        refreshTerminalView(false, resizeRole === "controller")
       }
     }
 
-    const t1 = setTimeout(doFitAndAttach, 50)
-    const t2 = setTimeout(doFitAndAttach, 200)
+    const t1 = requestAnimationFrame(doFitAndAttach)
+    const t2 = setTimeout(doFitAndAttach, 180)
+    const t3 = setTimeout(() => refreshTerminalView(true), 350)
+    const t4 = setTimeout(() => refreshTerminalView(true), 1000)
 
     term.onData((data) => {
+      sendResizeIntent()
       window.agentTerm.sendInput(sessionName, data, deviceId)
     })
 
     const removeOutput = window.agentTerm.onOutput((session, data, outputDeviceId) => {
       if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) {
-        term.write(data)
-        requestAnimationFrame(updateScrollThumb)
+        enqueueWrite(data)
+      }
+    })
+    const removeClear = window.agentTerm.onClear((session, outputDeviceId) => {
+      if (session === sessionName && (outputDeviceId || null) === (deviceId || null)) clearTerminal()
+    })
+    const removeSize = window.agentTerm.onSize((session, size, outputDeviceId) => {
+      if (session === sessionName && (outputDeviceId || null) === (deviceId || null) && size.cols && size.rows) {
+        knownRevision = Number(size.revision || knownRevision)
+        resizeRole = size.role === "controller" || size.controllerId === clientId ? "controller" : "observer"
+        if (size.sourceClientId === clientId || (size.controllerId === clientId && resizeRole === "controller")) return
+        applyingRemoteSize = true
+        try { term.resize(Number(size.cols), Number(size.rows)) } catch {}
+        requestAnimationFrame(() => { applyingRemoteSize = false; refreshTerminalView(true, false) })
       }
     })
     const removeScrollState = window.agentTerm.onScrollState((session, state, outputDeviceId) => {
@@ -240,27 +336,34 @@ export default function Terminal({ sessionName, deviceId }: TerminalProps) {
     requestAnimationFrame(updateScrollThumb)
 
     const observer = new ResizeObserver(() => {
-      if (failed) return
-      fitAddon.fit()
-      window.agentTerm.resize(sessionName, term.cols, term.rows, deviceId)
-      requestAnimationFrame(updateScrollThumb)
+      if (failed || applyingRemoteSize) return
+      if (resizeRole === "controller" && fitIfVisible()) scheduleControllerResize()
+      refreshTerminalView(false, false)
     })
     observer.observe(containerRef.current)
 
     return () => {
-      clearTimeout(t1)
+      cancelAnimationFrame(t1)
       clearTimeout(t2)
+      clearTimeout(t3)
+      clearTimeout(t4)
       if (scrollFrame) cancelAnimationFrame(scrollFrame)
+      if (resizeTimer) clearTimeout(resizeTimer)
       observer.disconnect()
+      containerRef.current?.removeEventListener("focusin", requestControl)
+      containerRef.current?.removeEventListener("pointerdown", requestControl)
       window.removeEventListener("pointermove", handleScrollPointerMove)
       window.removeEventListener("pointerup", handleScrollPointerUp)
       scrollHandle?.removeEventListener("pointerdown", handleScrollPointerDown)
+      compositionEvents.forEach((eventName) => helperTextarea?.removeEventListener(eventName, stabilizeImeLayout))
       scrollTargets.forEach((target) => {
         target.removeEventListener("wheel", handleWheel, { capture: true })
         target.removeEventListener("touchstart", handleTouchStart, { capture: true })
         target.removeEventListener("touchmove", handleTouchMove, { capture: true })
       })
       removeOutput()
+      removeClear()
+      removeSize()
       removeScrollState()
       window.agentTerm.detachSession(sessionName, deviceId)
       term.dispose()

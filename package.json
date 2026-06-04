@@ -1,6 +1,6 @@
 {
   "name": "agentterm",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Remote monitor and control for Claude Code, Codex, Gemini CLI and AI terminal agents",
   "scripts": {

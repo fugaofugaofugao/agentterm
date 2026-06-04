@@ -6,14 +6,26 @@
   let pingInterval = null;
   let resizeHandler = null;
   let viewportHandler = null;
+  let writeQueue = [];
+  let writing = false;
+  let clearingTerminal = false;
+  let writeGeneration = 0;
+  let terminalUsesRemoteSize = false;
+  let waitingForRemoteSize = false;
+  let initialResizeSent = false;
+  let resizeRole = 'observer';
+  let knownRevision = 0;
+  let clientId = '';
+  let resizeTimer = null;
+  let lastSentSize = '';
 
   var $ = function(s) { return document.querySelector(s); };
 
   function showPage(id) {
     document.querySelectorAll('.page').forEach(function(p) { p.classList.add('hidden'); });
     $(id).classList.remove('hidden');
-    if (id === '#terminal-page' && fitAddon) {
-      requestAnimationFrame(function() { fitAddon.fit(); });
+    if (id === '#terminal-page' && fitAddon && !terminalUsesRemoteSize) {
+      requestAnimationFrame(function() { if (!terminalUsesRemoteSize) fitAddon.fit(); });
     }
   }
 
@@ -196,7 +208,82 @@
   });
 
   // --- Terminal ---
+  function refreshTerminalView(scrollToBottom, allowFit) {
+    requestAnimationFrame(function() {
+      if (!terminal) return;
+      if (allowFit && !terminalUsesRemoteSize) { try { if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } catch(err) {} }
+      if (scrollToBottom) { try { terminal.scrollToBottom(); } catch(err) {} }
+      try { if (terminal.refresh) terminal.refresh(0, Math.max(0, terminal.rows - 1)); } catch(err) {}
+      requestAnimationFrame(function() { if (window.__agentTermRefreshScrollThumb) window.__agentTermRefreshScrollThumb(); });
+    });
+  }
+
+  function enqueueWrite(data) {
+    if (!terminal || !data) return;
+    var maxChunk = 8192;
+    for (var i = 0; i < data.length; i += maxChunk) writeQueue.push(data.slice(i, i + maxChunk));
+    pumpWriteQueue();
+  }
+
+  function pumpWriteQueue() {
+    if (!terminal || writing || !writeQueue.length) return;
+    var chunk = writeQueue.shift() || '';
+    writing = true;
+    terminal.write(chunk, function() {
+      writing = false;
+      refreshTerminalView(false);
+      pumpWriteQueue();
+    });
+  }
+
+  function clearTerminalView() {
+    writeQueue = [];
+    writing = false;
+    if (!terminal) return;
+    try { terminal.clear(); } catch(err) {}
+    try { terminal.reset(); } catch(err) {}
+    terminal.write('\x1b[3J\x1b[2J\x1b[H', function() {
+      refreshTerminalView(true, false);
+    });
+  }
+
+  function sendResizeIntent() {
+    if (!terminal || !fitAddon || !currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+    try { fitAddon.fit(); } catch(err) {}
+    resizeRole = 'controller';
+    terminalUsesRemoteSize = false;
+    currentWs.send(JSON.stringify({ type: 'resize-intent', cols: terminal.cols, rows: terminal.rows, clientId: clientId, revision: knownRevision }));
+  }
+
+  function sendFitResize() {
+    if (!terminal || !fitAddon || terminalUsesRemoteSize || resizeRole !== 'controller') return;
+    try { fitAddon.fit(); } catch(err) {}
+    var sizeKey = terminal.cols + 'x' + terminal.rows;
+    if (sizeKey === lastSentSize) return;
+    lastSentSize = sizeKey;
+    initialResizeSent = true;
+    if (currentWs && currentWs.readyState === WebSocket.OPEN)
+      currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows, clientId: clientId, revision: knownRevision }));
+  }
+
+  function scheduleFitResize() {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(sendFitResize, 100);
+  }
+
   function cleanupTerminal() {
+    writeGeneration += 1;
+    writeQueue = [];
+    writing = false;
+    clearingTerminal = false;
+    terminalUsesRemoteSize = false;
+    waitingForRemoteSize = false;
+    initialResizeSent = false;
+    resizeRole = 'observer';
+    knownRevision = 0;
+    clientId = '';
+    if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
+    lastSentSize = '';
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (resizeHandler) { window.removeEventListener('resize', resizeHandler); resizeHandler = null; }
     if (viewportHandler && window.visualViewport) { window.visualViewport.removeEventListener('resize', viewportHandler); viewportHandler = null; }
@@ -206,6 +293,8 @@
 
   function setupTouchScroll(termElement, sendScroll) {
     var touchStartY = 0;
+    var touchStartX = 0;
+    var touchScrolling = false;
     var accumulated = 0;
     var pendingLines = 0;
     var scrollFrame = 0;
@@ -282,15 +371,33 @@
       queueScroll(delta > 0 ? lines : -lines);
     }
 
+    function isTextInputTarget(target) {
+      if (!target || !target.closest) return false;
+      return !!target.closest('textarea,input,.xterm-helper-textarea,.composition-view,.xterm-composition-view');
+    }
+
     function onTouchStart(e) {
-      if (e.touches.length === 1) { touchStartY = e.touches[0].clientY; accumulated = 0; }
+      if (e.touches.length === 1) {
+        touchStartY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX;
+        touchScrolling = false;
+        accumulated = 0;
+      }
     }
 
     function onTouchMove(e) {
-      if (e.touches.length !== 1) return;
+      if (e.touches.length !== 1 || isTextInputTarget(e.target)) return;
+      var dx = e.touches[0].clientX - touchStartX;
+      var rawDy = e.touches[0].clientY - touchStartY;
+      if (!touchScrolling) {
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(rawDy) * 1.2) return;
+        if (Math.abs(rawDy) < 8) return;
+        touchScrolling = true;
+      }
       stopTerminalWheel(e);
       var dy = touchStartY - e.touches[0].clientY;
       touchStartY = e.touches[0].clientY;
+      touchStartX = e.touches[0].clientX;
       accumulated += dy;
       while (Math.abs(accumulated) >= LINE_PX) {
         queueScroll(accumulated > 0 ? 1 : -1);
@@ -392,7 +499,12 @@
     var container = $('#terminal-container');
     container.innerHTML = '';
 
-    await waitForFont('MesloNF', 5000);
+    waitForFont('MesloNF', 1200).then(function() {
+      if (terminal) {
+        terminal.options.fontFamily = TERM_FONT;
+        if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit();
+      }
+    });
 
     terminal = new window.Terminal({
       fontSize: 14,
@@ -407,7 +519,7 @@
         brightYellow: '#ffe066', brightBlue: '#5c7cfa', brightMagenta: '#da77f2',
         brightCyan: '#3bc9db', brightWhite: '#f8f9fa',
       },
-      cursorBlink: true, allowProposedApi: true, scrollback: 5000,
+      cursorBlink: true, allowProposedApi: true, scrollback: 5000, customGlyphs: false,
     });
 
     fitAddon = new window.FitAddon.FitAddon();
@@ -421,13 +533,41 @@
     } catch(err) {}
 
     terminal.open(container);
-    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon) fitAddon.fit(); } }, 300);
-    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon) fitAddon.fit(); } }, 1000);
+    function focusTerminalTextarea() {
+      var textarea = container.querySelector('.xterm-helper-textarea');
+      try { if (textarea) textarea.focus({ preventScroll: true }); else terminal.focus(); } catch(err) { try { terminal.focus(); } catch(_) {} }
+    }
+    function stabilizeImeLayout() {
+      requestAnimationFrame(function() {
+        if (!terminal || !fitAddon) return;
+        if (!terminalUsesRemoteSize) {
+          try { fitAddon.fit(); } catch(err) {}
+          if (currentWs && currentWs.readyState === WebSocket.OPEN)
+            currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        }
+        refreshTerminalView(false, false);
+      });
+    }
+    var helperTextarea = container.querySelector('.xterm-helper-textarea');
+    ['compositionstart','compositionupdate','compositionend','input'].forEach(function(eventName) {
+      if (helperTextarea) helperTextarea.addEventListener(eventName, stabilizeImeLayout);
+    });
+    container.addEventListener('pointerdown', function(e) {
+      if (e.target && e.target.closest && e.target.closest('.terminal-scroll-handle')) return;
+      setTimeout(focusTerminalTextarea, 0);
+      setTimeout(sendResizeIntent, 0);
+    }, { passive: true });
+    container.addEventListener('click', function() { setTimeout(focusTerminalTextarea, 0); setTimeout(sendResizeIntent, 0); }, { passive: true });
+    setTimeout(focusTerminalTextarea, 100);
+    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } }, 300);
+    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } }, 1000);
 
     var statusDot = $('#connection-status');
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var wsUrl = wsProto + '//' + location.host + '/ws?token=' + token + '&session=' + encodeURIComponent(sessionName);
     if (deviceId) wsUrl += '&deviceId=' + encodeURIComponent(deviceId);
+    clientId = 'web:' + (deviceId || 'local') + ':' + sessionName + ':' + Date.now();
+    waitingForRemoteSize = true;
     currentWs = new WebSocket(wsUrl);
 
     var termEl = container.querySelector('.xterm');
@@ -439,22 +579,32 @@
     currentWs.onopen = function() {
       statusDot.className = 'status-dot connected';
       requestAnimationFrame(function() {
-        fitAddon.fit();
-        if (currentWs && currentWs.readyState === WebSocket.OPEN)
-          currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        if (!waitingForRemoteSize) sendFitResize();
+        refreshTerminalView(true, false);
       });
+      setTimeout(function() { if (waitingForRemoteSize && !initialResizeSent) sendResizeIntent(); }, 250);
+      setTimeout(function() { refreshTerminalView(true); }, 350);
+      setTimeout(function() { refreshTerminalView(true); }, 1000);
     };
     currentWs.onmessage = function(event) {
       try {
         var msg = JSON.parse(event.data);
-        if (msg.type === 'clear') {
-          terminal.write('\x1b[3J\x1b[2J\x1b[H');
-          try { terminal.clear(); terminal.scrollToBottom(); } catch(err) {}
+        if (msg.type === 'terminal-size' && msg.cols && msg.rows) {
+          knownRevision = Number(msg.revision || knownRevision);
+          resizeRole = (msg.role === 'controller' || msg.controllerId === clientId) ? 'controller' : 'observer';
+          terminalUsesRemoteSize = resizeRole !== 'controller';
+          waitingForRemoteSize = false;
+          if (terminalUsesRemoteSize || msg.sourceClientId === clientId) initialResizeSent = true;
+          if (msg.sourceClientId !== clientId || resizeRole !== 'controller') {
+            try { terminal.resize(msg.cols, msg.rows); } catch(err) {}
+          }
+          refreshTerminalView(true, false);
+        } else if (msg.type === 'clear') {
+          clearTerminalView();
         } else if (msg.type === 'scroll-state') {
           if (window.__agentTermUpdateScrollState) window.__agentTermUpdateScrollState(msg);
         } else if (msg.type === 'output' && msg.data) {
-          terminal.write(msg.data);
-          requestAnimationFrame(function() { if (window.__agentTermRefreshScrollThumb) window.__agentTermRefreshScrollThumb(); });
+          enqueueWrite(msg.data);
         }
       } catch(err) {}
     };
@@ -467,15 +617,15 @@
     currentWs.onerror = function() { statusDot.className = 'status-dot disconnected'; };
 
     terminal.onData(function(data) {
+      sendResizeIntent();
       if (currentWs && currentWs.readyState === WebSocket.OPEN)
         currentWs.send(JSON.stringify({ type: 'input', data: data }));
     });
 
     resizeHandler = function() {
       if (fitAddon) {
-        fitAddon.fit();
-        if (currentWs && currentWs.readyState === WebSocket.OPEN)
-          currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+        if (!terminalUsesRemoteSize && !waitingForRemoteSize && resizeRole === 'controller') scheduleFitResize();
+        else refreshTerminalView(false, false);
       }
     };
     window.addEventListener('resize', resizeHandler);
@@ -495,10 +645,8 @@
         document.body.scrollTop = 0;
         if (fitAddon) {
           setTimeout(function() {
-            fitAddon.fit();
+            if (!terminalUsesRemoteSize && !waitingForRemoteSize && resizeRole === 'controller') scheduleFitResize();
             if (terminal) terminal.scrollToBottom();
-            if (currentWs && currentWs.readyState === WebSocket.OPEN)
-              currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
           }, 50);
         }
       };

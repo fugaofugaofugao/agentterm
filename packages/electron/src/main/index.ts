@@ -73,14 +73,20 @@ registerIpcHandlers(() => mainWindow)
 
 app.whenReady().then(() => {
   applyRuntimeSettings()
-  if (shared.isConfigured()) {
-    const config = shared.loadConfig()
-    if (config.mode === "host") {
-      startEmbeddedServer(config)
-    }
-  }
-
   createWindow()
+
+  setTimeout(() => {
+    try {
+      if (shared.isConfigured()) {
+        const config = shared.loadConfig()
+        if (config.mode === "host") {
+          startEmbeddedServer(config)
+        }
+      }
+    } catch (err) {
+      console.error("Failed to start embedded server", err)
+    }
+  }, 0)
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

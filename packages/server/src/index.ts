@@ -8,14 +8,15 @@ import {
   hashPassword, listSessions,
 } from "@agentterm/shared";
 import type { AppConfig, SessionInfo, DeviceInfo, WsMessage } from "@agentterm/shared";
-import { handleWsConnection, handleRelayOutput, handleRelayClear, handleRelayScrollState, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl, broadcastLocalClear } from "./ws";
+import { handleWsConnection, handleRelayOutput, handleRelayClear, handleRelayScrollState, handleRelayTerminalSize, handleRelayExit, cleanupRelayForDevice, isSessionViewed, isRelayViewed, sendRelayControl, broadcastLocalClear } from "./ws";
+import type { WsServerOptions } from "./ws";
 import { clientRegistry } from "./client-registry";
 
 function decodeRelayMessage(raw: string): WsMessage | null {
   try { return JSON.parse(raw); } catch { return null; }
 }
 
-export function startServer(config: AppConfig): { server: http.Server; close: () => void } {
+export function startServer(config: AppConfig, options: WsServerOptions = {}): { server: http.Server; close: () => void } {
   const app = express();
   const server = http.createServer(app);
 
@@ -221,6 +222,9 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       res.json({ ok: true });
       return;
     }
+    if (process.platform === "win32" && options.localTerminalAdapter) {
+      options.localTerminalAdapter.forceDetachSession(req.params.name);
+    }
     const { killSession } = require("@agentterm/shared");
     killSession(req.params.name);
     res.json({ ok: true });
@@ -238,8 +242,12 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
       return;
     }
     broadcastLocalClear(req.params.name);
-    const { resetSessionFresh } = require("@agentterm/shared");
-    resetSessionFresh(req.params.name, currentConfig.tmux?.default_shell);
+    if (process.platform === "win32" && options.localTerminalAdapter) {
+      options.localTerminalAdapter.resetSession(req.params.name);
+    } else {
+      const { resetSessionFresh } = require("@agentterm/shared");
+      resetSessionFresh(req.params.name, currentConfig.tmux?.default_shell);
+    }
     res.json({ ok: true });
   });
 
@@ -262,7 +270,7 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
     const payload = verifyToken(currentConfig.auth.jwt_secret, token);
     if (!payload) { ws.close(4001, "Invalid token"); return; }
 
-    handleWsConnection(ws, session, deviceId, currentConfig);
+    handleWsConnection(ws, session, deviceId, currentConfig, options);
   });
 
   function handleClientRelay(ws: WebSocket, token: string | null, config: AppConfig): void {
@@ -301,6 +309,11 @@ export function startServer(config: AppConfig): { server: http.Server; close: ()
         case "relay-scroll-state":
           if (registeredDeviceId && msg.sessionName) {
             handleRelayScrollState(registeredDeviceId, msg.sessionName, msg);
+          }
+          break;
+        case "terminal-size" as any:
+          if (registeredDeviceId && msg.sessionName) {
+            handleRelayTerminalSize(registeredDeviceId, msg.sessionName, msg as any);
           }
           break;
         case "relay-exit":

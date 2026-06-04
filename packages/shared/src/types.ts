@@ -70,6 +70,9 @@ export type WsMessageType =
   | "resize"
   | "scroll"
   | "clear"
+  | "terminal-size"
+  | "resize-intent"
+  | "resize-control"
   | "scroll-state"
   | "ping"
   | "pong"
@@ -105,4 +108,11 @@ export interface WsMessage {
   historySize?: number;
   paneHeight?: number;
   inCopyMode?: boolean;
+  passive?: boolean;
+  role?: "controller" | "observer";
+  clientId?: string;
+  controllerId?: string;
+  sourceClientId?: string;
+  revision?: number;
+  reason?: string;
 }

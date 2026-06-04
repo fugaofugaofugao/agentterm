@@ -33,8 +33,10 @@ contextBridge.exposeInMainWorld("agentTerm", {
   detachSession: (name: string, deviceId?: string | null) => ipcRenderer.invoke("terminal:detach", name, deviceId),
   sendInput: (session: string, data: string, deviceId?: string | null) =>
     ipcRenderer.send("terminal:input", session, data, deviceId),
-  resize: (session: string, cols: number, rows: number, deviceId?: string | null) =>
-    ipcRenderer.send("terminal:resize", session, cols, rows, deviceId),
+  resize: (session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string) =>
+    ipcRenderer.send("terminal:resize", session, cols, rows, deviceId, clientId),
+  resizeIntent: (session: string, cols: number, rows: number, deviceId?: string | null, clientId?: string) =>
+    ipcRenderer.send("terminal:resize-intent", session, cols, rows, deviceId, clientId),
   scroll: (session: string, lines: number, deviceId?: string | null) =>
     ipcRenderer.send("terminal:scroll", session, lines, deviceId),
 
@@ -60,5 +62,21 @@ contextBridge.exposeInMainWorld("agentTerm", {
     }
     ipcRenderer.on("terminal:exit", handler)
     return () => ipcRenderer.removeListener("terminal:exit", handler)
+  },
+
+  onClear: (callback: (session: string, deviceId?: string | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { session: string; deviceId?: string | null }) => {
+      callback(payload.session, payload.deviceId || null)
+    }
+    ipcRenderer.on("terminal:clear", handler)
+    return () => ipcRenderer.removeListener("terminal:clear", handler)
+  },
+
+  onSize: (callback: (session: string, size: any, deviceId?: string | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: any) => {
+      callback(payload.session, payload, payload.deviceId || null)
+    }
+    ipcRenderer.on("terminal:size", handler)
+    return () => ipcRenderer.removeListener("terminal:size", handler)
   },
 })

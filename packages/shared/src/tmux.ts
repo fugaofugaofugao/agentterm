@@ -60,7 +60,7 @@ function getProcessResourcesPath(): string | null {
 
 function tryExec(bin: string, env?: Record<string, string>): boolean {
   try {
-    execFileSync(bin, ["-V"], { stdio: "pipe", timeout: 3000, env: env || getTmuxEnv() });
+    execFileSync(bin, ["-V"], { stdio: "pipe", timeout: 500, env: env || getTmuxEnv() });
     return true;
   } catch {
     return false;
@@ -78,7 +78,7 @@ function findBundledTmux(): string | null {
   candidates.push(path.join(__dirname, "../../../resources/tmux/tmux"));
 
   for (const p of candidates) {
-    if (fs.existsSync(p) && tryExec(p)) return p;
+    if (fs.existsSync(p)) return p;
   }
   return null;
 }
@@ -103,10 +103,11 @@ function findTmux(): string {
   return "tmux";
 }
 
-const TMUX = findTmux();
+let cachedTmuxPath: string | null = null;
 
 export function getTmuxPath(): string {
-  return TMUX;
+  if (!cachedTmuxPath) cachedTmuxPath = findTmux();
+  return cachedTmuxPath;
 }
 
 export function getBundledTerminfoPath(): string | null {
@@ -152,7 +153,7 @@ export function getTmuxEnv(extra?: Record<string, string | undefined>): Record<s
 
 function execTmux(args: string[]): string {
   if (isWindows()) throw new Error("tmux is not available on Windows");
-  return execFileSync(TMUX, args, {
+  return execFileSync(getTmuxPath(), args, {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     env: getTmuxEnv(),
@@ -161,7 +162,7 @@ function execTmux(args: string[]): string {
 
 function execTmuxQuiet(args: string[]): void {
   if (isWindows()) throw new Error("tmux is not available on Windows");
-  execFileSync(TMUX, args, {
+  execFileSync(getTmuxPath(), args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: getTmuxEnv(),
   });

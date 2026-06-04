@@ -6,12 +6,14 @@ import { TmuxSession } from "@agentterm/shared"
 type OutputCallback = (session: string, data: string, deviceId?: string | null) => void
 type ExitCallback = (session: string, deviceId?: string | null) => void
 type ScrollStateCallback = (session: string, state: any, deviceId?: string | null) => void
+type SizeCallback = (session: string, size: any, deviceId?: string | null) => void
 
 let token: string | null = null
 let baseUrl: string = ""
 let onOutput: OutputCallback = () => {}
 let onExit: ExitCallback = () => {}
 let onScrollState: ScrollStateCallback = () => {}
+let onSize: SizeCallback = () => {}
 const connections = new Map<string, { ws: WebSocket; name: string; deviceId: string | null }>()
 
 function key(name: string, deviceId?: string | null): string { return `${deviceId || "local"}:${name}` }
@@ -19,6 +21,7 @@ function key(name: string, deviceId?: string | null): string { return `${deviceI
 export function setOutputCallback(cb: OutputCallback): void { onOutput = cb }
 export function setExitCallback(cb: ExitCallback): void { onExit = cb }
 export function setScrollStateCallback(cb: ScrollStateCallback): void { onScrollState = cb }
+export function setSizeCallback(cb: SizeCallback): void { onSize = cb }
 export function configure(url: string, authToken: string): void { baseUrl = url.replace(/\/$/, ""); token = authToken }
 
 function formatApiError(statusCode: number | undefined, data: any, fallback: string): Error {
@@ -106,13 +109,14 @@ export function attachSession(name: string, cols = 80, rows = 24, deviceId?: str
   let wsUrl = baseUrl.replace(/^http/, "ws") + `/ws?token=${token}&session=${encodeURIComponent(name)}`
   if (deviceId) wsUrl += `&deviceId=${encodeURIComponent(deviceId)}`
   const ws = new WebSocket(wsUrl)
-  ws.on("open", () => { ws.send(JSON.stringify({ type: "resize", cols, rows })) })
+  ws.on("open", () => { ws.send(JSON.stringify({ type: "resize-intent", cols, rows, clientId: `electron:${deviceId || "local"}:${name}` })) })
   ws.on("message", (raw: Buffer | string) => {
     if (connections.get(k)?.ws !== ws) return
     try {
       const msg = JSON.parse(raw.toString())
       if (msg.type === "clear") onOutput(name, "[3J[2J[H", deviceId || null)
       else if (msg.type === "scroll-state") onScrollState(name, msg, deviceId || null)
+      else if (msg.type === "terminal-size" || msg.type === "resize-control") onSize(name, msg, deviceId || null)
       else if (msg.type === "output" && msg.data) onOutput(name, msg.data, deviceId || null)
     } catch {}
   })
@@ -129,7 +133,8 @@ export function attachSession(name: string, cols = 80, rows = 24, deviceId?: str
 
 export function detachSession(name: string, deviceId?: string | null): void { const k = key(name, deviceId); const c = connections.get(k); if (c) { c.ws.close(); connections.delete(k) } }
 export function writeToPty(name: string, data: string, deviceId?: string | null): void { const c = connections.get(key(name, deviceId)); if (c?.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: "input", data })) }
-export function resizePty(name: string, cols: number, rows: number, deviceId?: string | null): void { const c = connections.get(key(name, deviceId)); if (c?.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: "resize", cols, rows })) }
+export function resizePty(name: string, cols: number, rows: number, deviceId?: string | null, clientId?: string): void { const c = connections.get(key(name, deviceId)); if (c?.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: "resize", cols, rows, clientId: clientId || `electron:${deviceId || "local"}:${name}` })) }
+export function resizeIntent(name: string, cols: number, rows: number, deviceId?: string | null, clientId?: string): void { const c = connections.get(key(name, deviceId)); if (c?.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: "resize-intent", cols, rows, clientId: clientId || `electron:${deviceId || "local"}:${name}` })) }
 export function scrollPty(name: string, lines: number, deviceId?: string | null): void { const c = connections.get(key(name, deviceId)); if (c?.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify({ type: "scroll", lines })) }
 export function detachAll(): void { for (const [, c] of connections) c.ws.close(); connections.clear() }
 export function isConnected(): boolean { return token !== null }
