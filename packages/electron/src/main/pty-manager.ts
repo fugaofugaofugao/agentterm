@@ -10,8 +10,10 @@ const sessionOwners = new Map<string, Set<string>>()
 const sessionSizes = new Map<string, { cols: number; rows: number }>()
 const suppressExit = new Set<string>()
 const recentInputs = new Map<string, { data: string; at: number }>()
+const scrollStateTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const freshSessions = new Set<string>()
 const outputHistory = new Map<string, string[]>()
+const windowsViewportOffsets = new Map<string, number>()
 const MAX_HISTORY_CHUNKS = 5000
 const MAX_HISTORY_CHARS = 4_000_000
 const tmuxPath = resolveTmuxPath()
@@ -55,6 +57,7 @@ const clearListeners = new Set<ClearCallback>()
 
 function rememberOutput(session: string, data: string): void {
   if (process.platform !== "win32" || !data) return
+  windowsViewportOffsets.set(session, 0)
   let chunks = outputHistory.get(session)
   if (!chunks) { chunks = []; outputHistory.set(session, chunks) }
   chunks.push(data)
@@ -70,6 +73,39 @@ function rememberOutput(session: string, data: string): void {
 
 function clearOutputHistory(session: string): void {
   outputHistory.delete(session)
+  windowsViewportOffsets.delete(session)
+}
+
+function getWindowsHistoryLines(sessionName: string): string[] {
+  const text = (outputHistory.get(sessionName) || []).join("").replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+  if (!text) return []
+  return text.split("\n")
+}
+
+export function getPtyScrollState(sessionName: string): { scrollPosition: number; historySize: number; paneHeight: number; inCopyMode: boolean } {
+  if (process.platform !== "win32") return getSessionScrollState(sessionName) as any
+  const rows = sessionSizes.get(sessionName)?.rows || 24
+  const lines = getWindowsHistoryLines(sessionName)
+  const historySize = Math.max(0, lines.length - rows)
+  const scrollPosition = Math.max(0, Math.min(historySize, windowsViewportOffsets.get(sessionName) || 0))
+  return { scrollPosition, historySize, paneHeight: rows, inCopyMode: false }
+}
+
+function renderWindowsViewport(sessionName: string): string {
+  const rows = sessionSizes.get(sessionName)?.rows || 24
+  const lines = getWindowsHistoryLines(sessionName)
+  const state = getPtyScrollState(sessionName)
+  const start = Math.max(0, lines.length - rows - state.scrollPosition)
+  return "\x1b[3J\x1b[2J\x1b[H" + lines.slice(start, start + rows).join("\r\n")
+}
+
+function scheduleScrollState(sessionName: string): void {
+  if (scrollStateTimers.has(sessionName)) return
+  const timer = setTimeout(() => {
+    scrollStateTimers.delete(sessionName)
+    if (sessions.has(sessionName)) onScrollState(sessionName, getPtyScrollState(sessionName))
+  }, 80)
+  scrollStateTimers.set(sessionName, timer)
 }
 
 function emitOutput(session: string, data: string): void {
@@ -171,17 +207,17 @@ export function attachSession(sessionName: string, cols = 80, rows = 24, owner =
     })
 
     sessions.set(sessionName, term)
-    onScrollState(sessionName, getSessionScrollState(sessionName))
+    onScrollState(sessionName, getPtyScrollState(sessionName))
     if (freshSessions.has(sessionName)) {
       setTimeout(() => {
         if (sessions.get(sessionName) === term) {
           clearSessionHistory(sessionName)
-          onScrollState(sessionName, getSessionScrollState(sessionName))
+          onScrollState(sessionName, getPtyScrollState(sessionName))
         }
         freshSessions.delete(sessionName)
       }, 200)
     }
-    term.onData((data: string) => { if (sessions.get(sessionName) === term) emitOutput(sessionName, data) })
+    term.onData((data: string) => { if (sessions.get(sessionName) === term) { emitOutput(sessionName, data); scheduleScrollState(sessionName) } })
     term.onExit(({ exitCode, signal }) => {
       console.log(`pty exit: session=${sessionName} code=${exitCode} signal=${signal} tmux=${tmuxPath}`)
       if (sessions.get(sessionName) !== term && !suppressExit.has(sessionName)) return
@@ -206,15 +242,22 @@ export function detachSession(sessionName: string, owner = "default"): void {
 export function forceDetachSession(sessionName: string): void {
   sessionOwners.delete(sessionName)
   clearOutputHistory(sessionName)
+  const pendingTimer = scrollStateTimers.get(sessionName)
+  if (pendingTimer) { clearTimeout(pendingTimer); scrollStateTimers.delete(sessionName) }
   const term = sessions.get(sessionName)
   if (term) { term.kill(); sessions.delete(sessionName) }
 }
 
+function isTerminalDeviceAnswerInput(data: string): boolean {
+  return /^\[(?:\?|>)?[0-9;]*c$/.test(data) || /^(?:\??|>?)[0-9;]+c$/.test(data)
+}
+
 export function writeToPty(sessionName: string, data: string): void {
+  if (isTerminalDeviceAnswerInput(data)) return
   if (shouldDropDuplicateInput(sessionName, data)) return
   if (process.platform !== "win32" && sessions.has(sessionName)) exitSessionCopyMode(sessionName)
   sessions.get(sessionName)?.write(data)
-  onScrollState(sessionName, getSessionScrollState(sessionName))
+  onScrollState(sessionName, getPtyScrollState(sessionName))
 }
 
 export function resizePty(sessionName: string, cols: number, rows: number): void {
@@ -240,10 +283,18 @@ export function getSessionSize(sessionName: string): { cols: number; rows: numbe
 }
 
 export function scrollPty(sessionName: string, lines: number): void {
-  if (sessions.has(sessionName)) {
-    scrollSessionPane(sessionName, lines)
-    onScrollState(sessionName, getSessionScrollState(sessionName))
+  if (!sessions.has(sessionName)) return
+  if (process.platform === "win32") {
+    const current = windowsViewportOffsets.get(sessionName) || 0
+    const state = getPtyScrollState(sessionName)
+    const next = Math.max(0, Math.min(state.historySize, current - Math.trunc(lines || 0)))
+    windowsViewportOffsets.set(sessionName, next)
+    emitOutput(sessionName, renderWindowsViewport(sessionName))
+    onScrollState(sessionName, getPtyScrollState(sessionName))
+    return
   }
+  scrollSessionPane(sessionName, lines)
+  onScrollState(sessionName, getPtyScrollState(sessionName))
 }
 
 export function resetSession(sessionName: string): void {
@@ -266,6 +317,9 @@ export function detachAll(): void {
   sessions.clear()
   sessionOwners.clear()
   outputHistory.clear()
+  windowsViewportOffsets.clear()
+  for (const [, timer] of scrollStateTimers) clearTimeout(timer)
+  scrollStateTimers.clear()
 }
 
 export function isAttached(sessionName: string): boolean {

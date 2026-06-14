@@ -7,6 +7,10 @@ import { clientRegistry } from "./client-registry";
 const relayViewers = new Map<string, Set<WebSocket>>();
 const localViewers = new Map<string, Set<WebSocket>>();
 const recentlyViewed = new Map<string, number>();
+const relayOutputHistory = new Map<string, string[]>();
+const relayScrollStates = new Map<string, { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean }>();
+const MAX_RELAY_HISTORY_CHUNKS = 2000;
+const MAX_RELAY_HISTORY_CHARS = 2_000_000;
 const RECENT_VIEW_TTL_MS = 15000;
 const recentLocalInputs = new Map<string, { data: string; at: number }>();
 const sessionSizeStates = new Map<string, { cols: number; rows: number; revision: number; controllerId?: string }>();
@@ -81,6 +85,41 @@ export function handleWsConnection(
   handleLocalSession(ws, sessionName, config, options);
 }
 
+
+function rememberRelayOutput(relayKey: string, data: string): void {
+  if (!data) return;
+  let chunks = relayOutputHistory.get(relayKey);
+  if (!chunks) { chunks = []; relayOutputHistory.set(relayKey, chunks); }
+  chunks.push(data);
+  let total = 0;
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    total += chunks[i].length;
+    if (total > MAX_RELAY_HISTORY_CHARS || chunks.length - i > MAX_RELAY_HISTORY_CHUNKS) {
+      chunks.splice(0, i + 1);
+      break;
+    }
+  }
+}
+
+function replayRelayState(ws: WebSocket, relayKey: string): void {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  const chunks = relayOutputHistory.get(relayKey) || [];
+  if (chunks.length) {
+    ws.send(encodeMessage({ type: "clear" }));
+    for (const data of chunks) if (ws.readyState === WebSocket.OPEN) ws.send(encodeMessage({ type: "output", data }));
+  }
+  const state = relayScrollStates.get(relayKey);
+  if (state && ws.readyState === WebSocket.OPEN) {
+    ws.send(encodeMessage({
+      scrollPosition: state.scrollPosition,
+      historySize: state.historySize,
+      paneHeight: state.paneHeight,
+      inCopyMode: state.inCopyMode,
+      type: "scroll-state",
+    }));
+  }
+}
+
 function shouldDropDuplicateInput(map: Map<string, { data: string; at: number }>, sessionName: string, data: string): boolean { return false; }
 
 function sendError(ws: WebSocket, message: string): void {
@@ -98,7 +137,13 @@ function sendClear(ws: WebSocket): void {
 function sendScrollState(ws: WebSocket, sessionName: string): void {
   if (ws.readyState !== WebSocket.OPEN) return;
   const state = getSessionScrollState(sessionName);
-  ws.send(encodeMessage({ type: "scroll-state", ...state }));
+  ws.send(encodeMessage({
+    scrollPosition: state.scrollPosition,
+    historySize: state.historySize,
+    paneHeight: state.paneHeight,
+    inCopyMode: state.inCopyMode,
+    type: "scroll-state",
+  }));
 }
 
 function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfig, options: WsServerOptions = {}): void {
@@ -117,6 +162,14 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
   const state = getSizeState(`local:${sessionName}`);
   let controllerId = state.controllerId;
   let term: pty.IPty;
+  let scrollStateTimer: ReturnType<typeof setTimeout> | null = null;
+  const scheduleScrollState = () => {
+    if (process.platform === "win32" || scrollStateTimer) return;
+    scrollStateTimer = setTimeout(() => {
+      scrollStateTimer = null;
+      sendScrollState(ws, sessionName);
+    }, 80);
+  };
   const sendTerminalSize = (role: "controller" | "observer" = controllerId === owner ? "controller" : "observer") => {
     const s = getSizeState(`local:${sessionName}`);
     if (ws.readyState === WebSocket.OPEN) ws.send(encodeMessage({ type: "terminal-size", cols: s.cols, rows: s.rows, revision: s.revision, controllerId: s.controllerId, role } as any));
@@ -144,6 +197,7 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
   term.onData((data: string) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(encodeMessage({ type: "output", data }));
+      scheduleScrollState();
     }
   });
 
@@ -195,6 +249,7 @@ function handleLocalSession(ws: WebSocket, sessionName: string, config: AppConfi
     const viewers = localViewers.get(sessionName);
     viewers?.delete(ws);
     if (viewers && viewers.size === 0) localViewers.delete(sessionName);
+    if (scrollStateTimer) clearTimeout(scrollStateTimer);
     term.kill();
   });
 
@@ -330,6 +385,8 @@ function handleRelayViewer(ws: WebSocket, sessionName: string, deviceId: string)
   }
   relayViewers.get(relayKey)!.add(ws);
   recentlyViewed.set(relayKey, Date.now() + RECENT_VIEW_TTL_MS);
+  replayRelayState(ws, relayKey);
+  setTimeout(() => replayRelayState(ws, relayKey), 120);
 
   try {
     clientWs.send(encodeMessage({
@@ -387,6 +444,7 @@ function handleRelayViewer(ws: WebSocket, sessionName: string, deviceId: string)
         }
         break;
       case "ping":
+        replayRelayState(ws, relayKey);
         ws.send(encodeMessage({ type: "pong" }));
         break;
     }
@@ -411,6 +469,7 @@ function handleRelayViewer(ws: WebSocket, sessionName: string, deviceId: string)
 
 export function handleRelayOutput(deviceId: string, sessionName: string, data: string): void {
   const relayKey = `${deviceId}:${sessionName}`;
+  rememberRelayOutput(relayKey, data);
   const viewers = relayViewers.get(relayKey);
   if (!viewers) return;
   const msg = encodeMessage({ type: "output", data });
@@ -429,6 +488,7 @@ export function broadcastLocalClear(sessionName: string): void {
 
 export function handleRelayClear(deviceId: string, sessionName: string): void {
   const relayKey = `${deviceId}:${sessionName}`;
+  relayOutputHistory.delete(relayKey);
   const viewers = relayViewers.get(relayKey);
   if (!viewers) return;
   for (const ws of viewers) sendClear(ws);
@@ -436,9 +496,16 @@ export function handleRelayClear(deviceId: string, sessionName: string): void {
 
 export function handleRelayScrollState(deviceId: string, sessionName: string, state: { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean }): void {
   const relayKey = `${deviceId}:${sessionName}`;
+  relayScrollStates.set(relayKey, { scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode });
   const viewers = relayViewers.get(relayKey);
   if (!viewers) return;
-  const msg = encodeMessage({ type: "scroll-state", ...state });
+  const msg = encodeMessage({
+    scrollPosition: state.scrollPosition,
+    historySize: state.historySize,
+    paneHeight: state.paneHeight,
+    inCopyMode: state.inCopyMode,
+    type: "scroll-state",
+  });
   for (const ws of viewers) {
     if (ws.readyState === WebSocket.OPEN) ws.send(msg);
   }
@@ -466,6 +533,8 @@ export function handleRelayExit(deviceId: string, sessionName: string): void {
     if (ws.readyState === WebSocket.OPEN) ws.close();
   }
   relayViewers.delete(relayKey);
+  relayOutputHistory.delete(relayKey);
+  relayScrollStates.delete(relayKey);
 }
 
 export function cleanupRelayForDevice(deviceId: string): void {

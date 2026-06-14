@@ -6,6 +6,8 @@
   let pingInterval = null;
   let resizeHandler = null;
   let viewportHandler = null;
+  let viewportScrollHandler = null;
+  let viewportFitTimer = null;
   let writeQueue = [];
   let writing = false;
   let clearingTerminal = false;
@@ -18,6 +20,20 @@
   let clientId = '';
   let resizeTimer = null;
   let lastSentSize = '';
+  let isComposing = false;
+  let pendingFitAfterComposition = false;
+  let compositionInputFallbackTimer = null;
+  let compositionDraft = '';
+  let compositionFilterDraft = '';
+  let recentCompositionDraft = '';
+  let recentCompositionFilterDraft = '';
+  let recentCompositionTimer = null;
+  let previousCursorStyle = null;
+  let mobileInputShim = null;
+  let mobileInputValue = '';
+  let mobileInputQueue = '';
+  let mobileInputFrame = 0;
+  let mobileLastFocusAt = 0;
 
   var $ = function(s) { return document.querySelector(s); };
 
@@ -211,7 +227,7 @@
   function refreshTerminalView(scrollToBottom, allowFit) {
     requestAnimationFrame(function() {
       if (!terminal) return;
-      if (allowFit && !terminalUsesRemoteSize) { try { if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } catch(err) {} }
+      if (allowFit && !terminalUsesRemoteSize && !isComposing) { try { if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } catch(err) {} }
       if (scrollToBottom) { try { terminal.scrollToBottom(); } catch(err) {} }
       try { if (terminal.refresh) terminal.refresh(0, Math.max(0, terminal.rows - 1)); } catch(err) {}
       requestAnimationFrame(function() { if (window.__agentTermRefreshScrollThumb) window.__agentTermRefreshScrollThumb(); });
@@ -238,17 +254,22 @@
 
   function clearTerminalView() {
     writeQueue = [];
-    writing = false;
     if (!terminal) return;
     try { terminal.clear(); } catch(err) {}
     try { terminal.reset(); } catch(err) {}
-    terminal.write('\x1b[3J\x1b[2J\x1b[H', function() {
+    // Browser xterm can miss the write callback when a relay replay starts with clear
+    // while remote terminal-size resize is also applied, leaving `writing` stuck true.
+    // Treat clear/reset as synchronous and let queued output render on the next frame.
+    writing = false;
+    requestAnimationFrame(function() {
       refreshTerminalView(true, false);
+      pumpWriteQueue();
     });
   }
 
   function sendResizeIntent() {
     if (!terminal || !fitAddon || !currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+    if (isComposing) { pendingFitAfterComposition = true; return; }
     try { fitAddon.fit(); } catch(err) {}
     resizeRole = 'controller';
     terminalUsesRemoteSize = false;
@@ -257,6 +278,7 @@
 
   function sendFitResize() {
     if (!terminal || !fitAddon || terminalUsesRemoteSize || resizeRole !== 'controller') return;
+    if (isComposing) { pendingFitAfterComposition = true; return; }
     try { fitAddon.fit(); } catch(err) {}
     var sizeKey = terminal.cols + 'x' + terminal.rows;
     if (sizeKey === lastSentSize) return;
@@ -267,8 +289,60 @@
   }
 
   function scheduleFitResize() {
+    if (isComposing) { pendingFitAfterComposition = true; return; }
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(sendFitResize, 100);
+  }
+
+  function sendTerminalInput(data) {
+    if (!data || !currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+    currentWs.send(JSON.stringify({ type: 'input', data: data }));
+  }
+
+  function runPendingFitAfterComposition() {
+    if (!pendingFitAfterComposition) return;
+    pendingFitAfterComposition = false;
+    setTimeout(scheduleFitResize, 80);
+  }
+
+  function resetInputCompositionState() {
+    isComposing = false;
+    compositionDraft = '';
+    compositionFilterDraft = '';
+    recentCompositionDraft = '';
+    recentCompositionFilterDraft = '';
+    if (recentCompositionTimer) { clearTimeout(recentCompositionTimer); recentCompositionTimer = null; }
+    pendingFitAfterComposition = false;
+    mobileInputValue = '';
+    mobileInputQueue = '';
+    if (mobileInputFrame) { cancelAnimationFrame(mobileInputFrame); mobileInputFrame = 0; }
+    mobileLastFocusAt = 0;
+    if (compositionInputFallbackTimer) { clearTimeout(compositionInputFallbackTimer); compositionInputFallbackTimer = null; }
+    if (viewportFitTimer) { clearTimeout(viewportFitTimer); viewportFitTimer = null; }
+    if (mobileInputShim && mobileInputShim.parentElement) mobileInputShim.parentElement.removeChild(mobileInputShim);
+    mobileInputShim = null;
+  }
+
+  function isMobileInputDevice() {
+    return !!(navigator.maxTouchPoints > 0 && /iPhone|iPad|iPod|Android|Mobile/i.test(navigator.userAgent || ''));
+  }
+
+  function sendMobileInput(data) {
+    if (!data) return;
+    if (data === '\r' || data === '\x7f' || data.charCodeAt(0) < 32) {
+      if (mobileInputFrame) { cancelAnimationFrame(mobileInputFrame); mobileInputFrame = 0; }
+      if (mobileInputQueue) { sendTerminalInput(mobileInputQueue); mobileInputQueue = ''; }
+      sendTerminalInput(data);
+      return;
+    }
+    mobileInputQueue += data;
+    if (mobileInputFrame) return;
+    mobileInputFrame = requestAnimationFrame(function() {
+      mobileInputFrame = 0;
+      var queued = mobileInputQueue;
+      mobileInputQueue = '';
+      sendTerminalInput(queued);
+    });
   }
 
   function cleanupTerminal() {
@@ -283,26 +357,79 @@
     knownRevision = 0;
     clientId = '';
     if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
+    resetInputCompositionState();
     lastSentSize = '';
     if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
     if (resizeHandler) { window.removeEventListener('resize', resizeHandler); resizeHandler = null; }
     if (viewportHandler && window.visualViewport) { window.visualViewport.removeEventListener('resize', viewportHandler); viewportHandler = null; }
+    if (viewportScrollHandler && window.visualViewport) { window.visualViewport.removeEventListener('scroll', viewportScrollHandler); viewportScrollHandler = null; }
     if (currentWs) { currentWs.close(); currentWs = null; }
     if (terminal) { terminal.dispose(); terminal = null; fitAddon = null; }
   }
 
-  function setupTouchScroll(termElement, sendScroll) {
+  // Browser mirror of packages/shared/src/terminal helpers. Keep this block in sync so
+  // Electron and web use the same iTerm2-inspired interaction semantics.
+  function terminalClamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+  function shouldHandleVerticalWheel(deltaX, deltaY) { return Math.abs(deltaX || 0) <= Math.abs(deltaY || 0) * 1.25; }
+  function normalizeWheelDeltaToLines(e, linePx, pageRows) {
+    var delta = e.deltaY || (-e.wheelDelta) || 0;
+    if (!delta) return 0;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return delta;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return delta * Math.max(1, pageRows || 24);
+    return delta / Math.max(1, linePx || 1);
+  }
+  function takeWholeAccumulatedScroll(accumulator, deltaLines, cap) {
+    if (!isFinite(deltaLines) || !deltaLines) return 0;
+    if (accumulator.value && Math.sign(deltaLines) !== Math.sign(accumulator.value)) accumulator.value = 0;
+    accumulator.value += deltaLines;
+    var whole = accumulator.value > 0 ? Math.floor(accumulator.value) : Math.ceil(accumulator.value);
+    if (!whole) return 0;
+    accumulator.value -= whole;
+    cap = Math.abs(cap || 24);
+    return terminalClamp(whole, -cap, cap);
+  }
+  function calculateScrollThumbLayout(state, trackHeight, forceVisible) {
+    var hasScrollableHistory = !!forceVisible || state.historySize > 0 || state.scrollPosition > 0;
+    if (!hasScrollableHistory) return { hasScrollableHistory: false, thumbHeight: 0, top: 0 };
+    trackHeight = Math.max(1, trackHeight || 1);
+    var visibleRatio = Math.max(0.12, Math.min(0.45, state.paneHeight / Math.max(state.historySize + state.paneHeight, 1)));
+    var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * visibleRatio)));
+    var maxTop = Math.max(0, trackHeight - thumbHeight);
+    var maxScroll = Math.max(1, state.historySize, state.scrollPosition);
+    var ratio = 1 - terminalClamp(state.scrollPosition / maxScroll, 0, 1);
+    return { hasScrollableHistory: true, thumbHeight: thumbHeight, top: Math.round(maxTop * ratio) };
+  }
+  function calculateScrollTargetFromDrag(state, pointerStartScroll, dy, trackHeight, thumbHeight) {
+    var maxTop = Math.max(1, (trackHeight || 1) - (thumbHeight || 72));
+    var historySize = Math.max(state.historySize, state.scrollPosition, 1);
+    return terminalClamp(pointerStartScroll - Math.round((dy / maxTop) * historySize), 0, historySize);
+  }
+  function stripTerminalDeviceAnswers(data) {
+    return data.replace(/\[(?:\?|>)?[0-9;]*c/g, '').replace(/(?:\??|>?)[0-9;]+c/g, '');
+  }
+  function shouldDropCompositionDraft(outgoing, activeDraft) {
+    if (!activeDraft || !/^[ -]+$/.test(outgoing)) return false;
+    var draft = activeDraft.replace(/\s+/g, '');
+    var compact = outgoing.replace(/\s+/g, '');
+    return outgoing === activeDraft || compact === draft || draft.indexOf(compact) === 0 || compact.indexOf(draft) === 0;
+  }
+
+  function setupTouchScroll(termElement, sendScroll, remotePane) {
     var touchStartY = 0;
     var touchStartX = 0;
     var touchScrolling = false;
     var accumulated = 0;
     var pendingLines = 0;
     var scrollFrame = 0;
-    var LINE_PX = 18;
+    var remoteScrollTimer = null;
+    var wheelAccumulator = { value: 0 };
+    var LOCAL_LINE_PX = 18;
+    var REMOTE_LINE_PX = 32;
+    var REMOTE_FLUSH_MS = 42;
     var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false };
     var scrollHandle = null;
     var scrollThumb = null;
-    function usesTmuxScroll() { return scrollState.paneHeight > 0; }
+    function usesTmuxScroll() { return !!remotePane || scrollState.paneHeight > 0; }
     function getLocalScrollState() {
       if (!terminal || !terminal.buffer || !terminal.buffer.active) return { scrollPosition: 0, historySize: 0, paneHeight: 0 };
       var buffer = terminal.buffer.active;
@@ -313,17 +440,12 @@
     function getEffectiveScrollState() { return usesTmuxScroll() ? scrollState : getLocalScrollState(); }
     function updateScrollThumb() {
       if (!scrollHandle || !scrollThumb) return;
-      var state = getEffectiveScrollState();
-      var hasScrollableHistory = state.historySize > 0 || state.scrollPosition > 0;
-      scrollHandle.style.display = hasScrollableHistory ? 'block' : 'none';
-      if (!hasScrollableHistory) return;
-      var trackHeight = scrollHandle.clientHeight || 1;
-      var thumbHeight = Math.max(44, Math.min(96, Math.round(trackHeight * Math.max(0.12, Math.min(0.45, state.paneHeight / Math.max(state.historySize + state.paneHeight, 1))))));
-      var maxTop = Math.max(0, trackHeight - thumbHeight);
-      var maxScroll = Math.max(1, state.historySize);
-      var ratio = 1 - Math.max(0, Math.min(1, state.scrollPosition / maxScroll));
-      scrollThumb.style.height = thumbHeight + 'px';
-      scrollThumb.style.transform = 'translateY(' + Math.round(maxTop * ratio) + 'px)';
+      var layout = calculateScrollThumbLayout(getEffectiveScrollState(), scrollHandle.clientHeight || 1, usesTmuxScroll());
+      scrollHandle.classList.toggle('is-scrollable', layout.hasScrollableHistory);
+      scrollHandle.setAttribute('aria-hidden', layout.hasScrollableHistory ? 'false' : 'true');
+      if (!layout.hasScrollableHistory) return;
+      scrollThumb.style.height = layout.thumbHeight + 'px';
+      scrollThumb.style.transform = 'translateY(' + layout.top + 'px)';
     }
     window.__agentTermRefreshScrollThumb = updateScrollThumb;
     window.__agentTermUpdateScrollState = function(state) {
@@ -334,6 +456,7 @@
       updateScrollThumb();
     };
     var targets = [termElement];
+    if (termElement.parentElement) targets.push(termElement.parentElement);
     var viewport = termElement.querySelector('.xterm-viewport');
     var screen = termElement.querySelector('.xterm-screen');
     if (viewport) targets.push(viewport);
@@ -347,28 +470,44 @@
 
     function flushScroll() {
       scrollFrame = 0;
+      if (remoteScrollTimer) { clearTimeout(remoteScrollTimer); remoteScrollTimer = null; }
       if (!pendingLines) return;
-      var lines = Math.max(-120, Math.min(120, pendingLines));
+      var remote = usesTmuxScroll();
+      var maxLines = remote ? 36 : 120;
+      var lines = Math.max(-maxLines, Math.min(maxLines, pendingLines));
       pendingLines -= lines;
-      if (usesTmuxScroll()) sendScroll(lines);
+      if (remote) sendScroll(lines);
       else if (terminal) { terminal.scrollLines(lines); requestAnimationFrame(updateScrollThumb); }
-      if (pendingLines) scrollFrame = requestAnimationFrame(flushScroll);
+      if (pendingLines) scheduleScrollFlush();
+    }
+
+    function scheduleScrollFlush() {
+      if (usesTmuxScroll()) {
+        if (!remoteScrollTimer) remoteScrollTimer = setTimeout(flushScroll, REMOTE_FLUSH_MS);
+      } else if (!scrollFrame) {
+        scrollFrame = requestAnimationFrame(flushScroll);
+      }
     }
 
     function queueScroll(lines) {
-      if (usesTmuxScroll() && scrollState.historySize > 0) {
-        scrollState.scrollPosition = Math.max(0, Math.min(scrollState.historySize, scrollState.scrollPosition - lines));
+      if (!isFinite(lines) || !lines) return;
+      if (usesTmuxScroll()) {
+        scrollState.scrollPosition = Math.max(0, Math.min(Math.max(scrollState.historySize, scrollState.scrollPosition), scrollState.scrollPosition - lines));
         updateScrollThumb();
       }
       pendingLines += lines;
-      if (!scrollFrame) scrollFrame = requestAnimationFrame(flushScroll);
+      scheduleScrollFlush();
     }
 
     function onWheel(e) {
+      if (e.__agentTermWheelHandled) return;
+      if (!shouldHandleVerticalWheel(e.deltaX || 0, e.deltaY || 0)) return;
+      e.__agentTermWheelHandled = true;
       stopTerminalWheel(e);
-      var delta = e.deltaY || (-e.wheelDelta) || 0;
-      var lines = Math.max(1, Math.round(Math.abs(delta) / LINE_PX));
-      queueScroll(delta > 0 ? lines : -lines);
+      var linePx = usesTmuxScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX;
+      var rawLines = normalizeWheelDeltaToLines(e, linePx, (terminal && terminal.rows) || 24);
+      var lines = takeWholeAccumulatedScroll(wheelAccumulator, rawLines, 24);
+      if (lines) queueScroll(lines);
     }
 
     function isTextInputTarget(target) {
@@ -399,9 +538,10 @@
       touchStartY = e.touches[0].clientY;
       touchStartX = e.touches[0].clientX;
       accumulated += dy;
-      while (Math.abs(accumulated) >= LINE_PX) {
+      var linePx = usesTmuxScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX;
+      while (Math.abs(accumulated) >= linePx) {
         queueScroll(accumulated > 0 ? 1 : -1);
-        accumulated += accumulated > 0 ? -LINE_PX : LINE_PX;
+        accumulated += accumulated > 0 ? -linePx : linePx;
       }
     }
 
@@ -411,12 +551,9 @@
     function onPointerMove(e) {
       e.preventDefault();
       var state = getEffectiveScrollState();
-      if (scrollHandle && scrollThumb && state.historySize > 0) {
-        var trackHeight = scrollHandle.clientHeight || 1;
-        var thumbHeight = scrollThumb.clientHeight || 72;
-        var maxTop = Math.max(1, trackHeight - thumbHeight);
+      if (scrollHandle && scrollThumb && (usesTmuxScroll() || state.historySize > 0 || state.scrollPosition > 0)) {
         var dy = e.clientY - pointerStartY;
-        var targetScroll = Math.max(0, Math.min(state.historySize, pointerStartScroll - Math.round((dy / maxTop) * state.historySize)));
+        var targetScroll = calculateScrollTargetFromDrag(state, pointerStartScroll, dy, scrollHandle.clientHeight || 1, scrollThumb.clientHeight || 72);
         var delta = targetScroll - state.scrollPosition;
         if (delta) {
           if (usesTmuxScroll()) {
@@ -433,17 +570,20 @@
       var dy = e.clientY - pointerStartY;
       pointerStartY = e.clientY;
       pointerAccumulated += dy;
-      while (Math.abs(pointerAccumulated) >= 6) {
+      while (Math.abs(pointerAccumulated) >= 8) {
         queueScroll(pointerAccumulated > 0 ? 2 : -2);
-        pointerAccumulated += pointerAccumulated > 0 ? -6 : 6;
+        pointerAccumulated += pointerAccumulated > 0 ? -8 : 8;
       }
     }
     function onPointerUp() {
+      if (scrollHandle) scrollHandle.classList.remove('is-dragging');
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      if (pendingLines) flushScroll();
     }
     function onPointerDown(e) {
       e.preventDefault();
+      if (scrollHandle) scrollHandle.classList.add('is-dragging');
       pointerStartY = e.clientY;
       pointerStartScroll = getEffectiveScrollState().scrollPosition;
       pointerAccumulated = 0;
@@ -457,15 +597,29 @@
       target.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
     });
     var container = termElement.parentElement;
-    if (container && !container.querySelector('.terminal-scroll-handle')) {
-      scrollHandle = document.createElement('div');
-      scrollHandle.className = 'terminal-scroll-handle';
-      scrollHandle.title = 'Drag to scroll terminal history';
-      scrollThumb = document.createElement('div');
-      scrollThumb.className = 'terminal-scroll-thumb';
-      scrollHandle.appendChild(scrollThumb);
+    if (terminal && terminal.attachCustomWheelEventHandler) {
+      terminal.attachCustomWheelEventHandler(function(e) { onWheel(e); return false; });
+    }
+
+    if (container) {
+      scrollHandle = container.querySelector('.terminal-scroll-handle');
+      if (!scrollHandle) {
+        scrollHandle = document.createElement('div');
+        scrollHandle.className = 'terminal-scroll-handle';
+        scrollHandle.title = 'Drag to scroll terminal history';
+        container.appendChild(scrollHandle);
+      }
+      scrollThumb = scrollHandle.querySelector('.terminal-scroll-thumb');
+      if (!scrollThumb) {
+        scrollThumb = document.createElement('div');
+        scrollThumb.className = 'terminal-scroll-thumb';
+        scrollHandle.appendChild(scrollThumb);
+      }
       scrollHandle.addEventListener('pointerdown', onPointerDown, { passive: false });
-      container.appendChild(scrollHandle);
+      if (remotePane) {
+        scrollHandle.classList.add('is-scrollable');
+        scrollHandle.setAttribute('aria-hidden', 'false');
+      }
       updateScrollThumb();
     }
   }
@@ -533,48 +687,281 @@
     } catch(err) {}
 
     terminal.open(container);
-    function focusTerminalTextarea() {
-      var textarea = container.querySelector('.xterm-helper-textarea');
-      try { if (textarea) textarea.focus({ preventScroll: true }); else terminal.focus(); } catch(err) { try { terminal.focus(); } catch(_) {} }
+    window.__agentTermOpenTerminalArgs = { sessionName: sessionName, deviceId: deviceId || null };
+    terminalUsesRemoteSize = !!deviceId;
+    var useMobileInputShim = isMobileInputDevice();
+    function getHelperTextarea() {
+      return container.querySelector('.xterm-helper-textarea');
     }
-    function stabilizeImeLayout() {
-      requestAnimationFrame(function() {
-        if (!terminal || !fitAddon) return;
-        if (!terminalUsesRemoteSize) {
-          try { fitAddon.fit(); } catch(err) {}
-          if (currentWs && currentWs.readyState === WebSocket.OPEN)
-            currentWs.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    function getCompositionText(e, fallbackEl) {
+      var target = e && e.target;
+      var eventData = (e && e.data) || '';
+      var value = (target && target.value) || (fallbackEl && fallbackEl.value) || '';
+      if (eventData) return eventData;
+      if (value.length >= compositionDraft.length) return value;
+      return compositionDraft || value;
+    }
+    function getCompositionFilterText(e, fallbackEl) {
+      var target = e && e.target;
+      return (target && target.value) || (fallbackEl && fallbackEl.value) || compositionFilterDraft || compositionDraft || ((e && e.data) || '');
+    }
+    function applyImeCursorStyle(active) {
+      container.classList.toggle('is-ime-composing', active);
+    }
+
+    // Native-anchored IME (matches the Electron renderer). We do NOT draw our own
+    // preedit overlay or transform .xterm-rows; xterm renders the marked text inline
+    // at the cursor and pins .xterm-helper-textarea to the cursor cell so the OS
+    // candidate window tracks the caret. The old custom overlay desynced the textarea
+    // from the cursor, which made the candidate panel jump to the corner and the draft
+    // overlap on the last line.
+    function patchNativeCompositionHelper() {
+      var helper = terminal && terminal._core && terminal._core._compositionHelper;
+      if (!helper || helper.__agentTermImePatchApplied) return helper;
+      var compositionView = helper._compositionView;
+      var textarea = helper._textarea;
+      if (!compositionView || !textarea) return helper;
+      var originalCompositionUpdate = helper.compositionupdate && helper.compositionupdate.bind(helper);
+      var originalUpdateElements = helper.updateCompositionElements && helper.updateCompositionElements.bind(helper);
+      var caret = document.createElement('span');
+      caret.className = 'agentterm-ime-caret';
+      caret.setAttribute('aria-hidden', 'true');
+
+      function renderCompositionText(data) {
+        compositionView.textContent = data ? ('\u200E' + data + '\u200E') : '';
+        if (data) compositionView.appendChild(caret);
+      }
+
+      helper.compositionupdate = function(event) {
+        var data = (event && event.data) || '';
+        if (originalCompositionUpdate) originalCompositionUpdate(Object.assign({}, event, { data: data }));
+        renderCompositionText(data);
+        if (helper.updateCompositionElements) helper.updateCompositionElements();
+      };
+
+      helper.updateCompositionElements = function(dontRecurse) {
+        if (!helper.isComposing) return;
+        if (originalUpdateElements) originalUpdateElements(true);
+        var renderService = terminal && terminal._core && terminal._core._renderService;
+        var bufferService = terminal && terminal._core && terminal._core._bufferService;
+        var cellWidth = Number(renderService && renderService.dimensions && renderService.dimensions.css && renderService.dimensions.css.cell && renderService.dimensions.css.cell.width) || 8;
+        var cols = Number((bufferService && bufferService.cols) || (terminal && terminal.cols) || 0);
+        var cursorLeft = parseFloat(compositionView.style.left || '0') || 0;
+        var maxWidth = Math.max(cellWidth, cols * cellWidth - cursorLeft);
+        compositionView.style.maxWidth = maxWidth + 'px';
+        compositionView.style.overflow = 'hidden';
+        compositionView.style.direction = 'rtl';
+        compositionView.style.whiteSpace = 'nowrap';
+        compositionView.style.overflowWrap = 'normal';
+        compositionView.style.wordBreak = 'normal';
+        var bounds = compositionView.getBoundingClientRect();
+        textarea.style.width = Math.max(Math.min(bounds.width, maxWidth), 1) + 'px';
+        textarea.style.height = Math.max(bounds.height, 1) + 'px';
+        textarea.style.lineHeight = Math.max(bounds.height, 1) + 'px';
+        if (!dontRecurse) setTimeout(function() { if (helper.updateCompositionElements) helper.updateCompositionElements(true); }, 0);
+      };
+      helper.__agentTermImePatchApplied = true;
+      return helper;
+    }
+
+    function reanchorNativeComposition() {
+      try {
+        var helper = patchNativeCompositionHelper();
+        if (!helper || !helper.isComposing || !helper.updateCompositionElements) return;
+        helper.updateCompositionElements(true);
+      } catch (err) {}
+    }
+
+    function scheduleNativeCompositionReanchor() {
+      patchNativeCompositionHelper();
+      if (window.queueMicrotask) window.queueMicrotask(reanchorNativeComposition);
+      else setTimeout(reanchorNativeComposition, 0);
+      requestAnimationFrame(reanchorNativeComposition);
+    }
+
+    function updateNativeCompositionState(text) {
+      if (!isComposing || !text) {
+        compositionDraft = '';
+        if (!isComposing) compositionFilterDraft = '';
+        applyImeCursorStyle(false);
+        return;
+      }
+      compositionDraft = text;
+      applyImeCursorStyle(true);
+      scheduleNativeCompositionReanchor();
+    }
+
+    function ensureMobileInputShim() {
+      if (!useMobileInputShim) return null;
+      if (mobileInputShim) return mobileInputShim;
+      mobileInputShim = document.createElement('textarea');
+      mobileInputShim.className = 'terminal-mobile-input';
+      mobileInputShim.autocapitalize = 'none';
+      mobileInputShim.autocomplete = 'off';
+      mobileInputShim.autocorrect = 'off';
+      mobileInputShim.spellcheck = false;
+      mobileInputShim.rows = 1;
+      mobileInputShim.setAttribute('aria-label', 'Terminal input');
+      mobileInputShim.value = '';
+      mobileInputValue = '';
+      container.appendChild(mobileInputShim);
+      mobileInputShim.addEventListener('compositionstart', function(e) {
+        isComposing = true;
+      });
+      mobileInputShim.addEventListener('compositionupdate', function(e) {
+        isComposing = true;
+      });
+      mobileInputShim.addEventListener('compositionend', function(e) {
+        isComposing = false;
+        var committed = (e && e.data) || '';
+        if (committed) sendCompositionCommit(committed);
+        mobileInputValue = '';
+        try { mobileInputShim.value = ''; } catch(err) {}
+        runPendingFitAfterComposition();
+      });
+      mobileInputShim.addEventListener('beforeinput', function(e) {
+        if (!e) return;
+        if (e.inputType === 'insertLineBreak') {
+          e.preventDefault();
+          sendMobileInput('\r');
+          mobileInputValue = '';
+          try { mobileInputShim.value = ''; } catch(err) {}
+        } else if (e.inputType === 'deleteContentBackward') {
+          e.preventDefault();
+          sendMobileInput('\x7f');
+          mobileInputValue = '';
+          try { mobileInputShim.value = ''; } catch(err) {}
         }
-        refreshTerminalView(false, false);
+      });
+      mobileInputShim.addEventListener('input', function() {
+        if (isComposing) return;
+        var value = mobileInputShim.value || '';
+        if (value && value !== mobileInputValue) {
+          var data = value.indexOf(mobileInputValue) === 0 ? value.slice(mobileInputValue.length) : value;
+          if (data) sendMobileInput(data);
+        }
+        mobileInputValue = '';
+        try { mobileInputShim.value = ''; } catch(err) {}
+      });
+      mobileInputShim.addEventListener('keydown', function(e) {
+        if (!e || isComposing) return;
+        if (e.key === 'Enter') { e.preventDefault(); sendMobileInput('\r'); }
+        else if (e.key === 'Backspace') { e.preventDefault(); sendMobileInput('\x7f'); }
+      });
+      mobileInputShim.addEventListener('blur', function() {
+        isComposing = false;
+        runPendingFitAfterComposition();
+      });
+      return mobileInputShim;
+    }
+    function focusTerminalTextarea() {
+      var mobileShim = ensureMobileInputShim();
+      if (mobileShim) {
+        if (container && container.querySelector('.terminal-scroll-handle.is-dragging')) return;
+        var now = Date.now();
+        if (document.activeElement !== mobileShim || now - mobileLastFocusAt > 600) {
+          mobileLastFocusAt = now;
+          try { mobileShim.focus({ preventScroll: true }); } catch(err) { try { mobileShim.focus(); } catch(_) {} }
+        }
+        if (viewportHandler) viewportHandler();
+        if (!isComposing) setTimeout(sendResizeIntent, 0);
+        return;
+      }
+      var textarea = getHelperTextarea();
+      try { terminal.focus(); } catch(_) {}
+      try { if (textarea) textarea.focus({ preventScroll: true }); } catch(err) { try { if (textarea) textarea.focus(); } catch(_) {} }
+    }
+    function sendCompositionCommit(data) {
+      if (!data) return;
+      if (!useMobileInputShim) sendTerminalInput(data);
+      else sendMobileInput(data);
+    }
+    function scheduleCompositionInputFallback(textarea) {
+      if (compositionInputFallbackTimer) clearTimeout(compositionInputFallbackTimer);
+      compositionInputFallbackTimer = setTimeout(function() {
+        compositionInputFallbackTimer = null;
+        if (!textarea || isComposing) return;
+        var value = textarea.value || '';
+        if (!value) return;
+        sendCompositionCommit(value);
+        try { textarea.value = ''; } catch(err) {}
+      }, 30);
+    }
+    patchNativeCompositionHelper();
+    requestAnimationFrame(function() { patchNativeCompositionHelper(); });
+
+    var helperTextarea = getHelperTextarea();
+    if (!useMobileInputShim && helperTextarea) {
+      helperTextarea.addEventListener('compositionstart', function(e) {
+        isComposing = true;
+        compositionDraft = getCompositionText(e, helperTextarea);
+        compositionFilterDraft = getCompositionFilterText(e, helperTextarea);
+        updateNativeCompositionState(compositionDraft);
+        if (compositionInputFallbackTimer) { clearTimeout(compositionInputFallbackTimer); compositionInputFallbackTimer = null; }
+      });
+      helperTextarea.addEventListener('compositionupdate', function(e) {
+        isComposing = true;
+        compositionDraft = getCompositionText(e, helperTextarea);
+        compositionFilterDraft = getCompositionFilterText(e, helperTextarea);
+        updateNativeCompositionState(compositionDraft);
+      });
+      helperTextarea.addEventListener('compositionend', function(e) {
+        var draft = compositionDraft;
+        var filterDraft = getCompositionFilterText(e, helperTextarea);
+        isComposing = false;
+        compositionDraft = '';
+        compositionFilterDraft = '';
+        if (draft || filterDraft) {
+          recentCompositionDraft = draft;
+          recentCompositionFilterDraft = filterDraft;
+          if (recentCompositionTimer) clearTimeout(recentCompositionTimer);
+          recentCompositionTimer = setTimeout(function() { recentCompositionDraft = ''; recentCompositionFilterDraft = ''; recentCompositionTimer = null; }, 350);
+        }
+        updateNativeCompositionState('');
+        previousCursorStyle = null;
+        runPendingFitAfterComposition();
+        setTimeout(focusTerminalTextarea, 0);
+      });
+      helperTextarea.addEventListener('input', function(e) {
+        if (!isComposing) return;
+        compositionDraft = getCompositionText(e, helperTextarea);
+        compositionFilterDraft = getCompositionFilterText(e, helperTextarea);
+        updateNativeCompositionState(compositionDraft);
+      });
+      helperTextarea.addEventListener('blur', function() {
+        isComposing = false;
+        compositionDraft = '';
+        compositionFilterDraft = '';
+        updateNativeCompositionState('');
+        runPendingFitAfterComposition();
       });
     }
-    var helperTextarea = container.querySelector('.xterm-helper-textarea');
-    ['compositionstart','compositionupdate','compositionend','input'].forEach(function(eventName) {
-      if (helperTextarea) helperTextarea.addEventListener(eventName, stabilizeImeLayout);
-    });
-    container.addEventListener('pointerdown', function(e) {
-      if (e.target && e.target.closest && e.target.closest('.terminal-scroll-handle')) return;
-      setTimeout(focusTerminalTextarea, 0);
-      setTimeout(sendResizeIntent, 0);
-    }, { passive: true });
-    container.addEventListener('click', function() { setTimeout(focusTerminalTextarea, 0); setTimeout(sendResizeIntent, 0); }, { passive: true });
+    function focusAndMaybeControl(e) {
+      if (e && e.target && e.target.closest && e.target.closest('.terminal-scroll-handle')) return;
+      if (e && e.type === 'pointerdown' && e.pointerType === 'mouse') return;
+      focusTerminalTextarea();
+      if (!useMobileInputShim && !isComposing) setTimeout(sendResizeIntent, 0);
+    }
+    container.addEventListener('pointerdown', focusAndMaybeControl, { passive: true });
+    container.addEventListener('touchstart', focusAndMaybeControl, { passive: true });
+    container.addEventListener('click', focusAndMaybeControl, { passive: true });
     setTimeout(focusTerminalTextarea, 100);
-    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } }, 300);
-    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize) fitAddon.fit(); } }, 1000);
+    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize && !isComposing) fitAddon.fit(); } }, 300);
+    setTimeout(function() { if (terminal) { terminal.options.fontFamily = TERM_FONT; if (fitAddon && !terminalUsesRemoteSize && !isComposing) fitAddon.fit(); } }, 1000);
 
     var statusDot = $('#connection-status');
     var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var wsUrl = wsProto + '//' + location.host + '/ws?token=' + token + '&session=' + encodeURIComponent(sessionName);
     if (deviceId) wsUrl += '&deviceId=' + encodeURIComponent(deviceId);
     clientId = 'web:' + (deviceId || 'local') + ':' + sessionName + ':' + Date.now();
-    waitingForRemoteSize = true;
+    waitingForRemoteSize = !!deviceId;
     currentWs = new WebSocket(wsUrl);
 
     var termEl = container.querySelector('.xterm');
     if (termEl) setupTouchScroll(termEl, function(lines) {
       if (currentWs && currentWs.readyState === WebSocket.OPEN)
         currentWs.send(JSON.stringify({ type: 'scroll', lines: lines }));
-    });
+    }, !!deviceId);
 
     currentWs.onopen = function() {
       statusDot.className = 'status-dot connected';
@@ -588,6 +975,7 @@
     };
     currentWs.onmessage = function(event) {
       try {
+        if (statusDot) statusDot.className = 'status-dot connected';
         var msg = JSON.parse(event.data);
         if (msg.type === 'terminal-size' && msg.cols && msg.rows) {
           knownRevision = Number(msg.revision || knownRevision);
@@ -606,20 +994,31 @@
         } else if (msg.type === 'output' && msg.data) {
           enqueueWrite(msg.data);
         }
-      } catch(err) {}
+      } catch(err) { window.__agentTermLastWsError = String(err && err.message || err); }
     };
     currentWs.onclose = function() {
       statusDot.className = 'status-dot disconnected';
       if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
       if (resizeHandler) { window.removeEventListener('resize', resizeHandler); resizeHandler = null; }
       if (viewportHandler && window.visualViewport) { window.visualViewport.removeEventListener('resize', viewportHandler); viewportHandler = null; }
+      if (viewportScrollHandler && window.visualViewport) { window.visualViewport.removeEventListener('scroll', viewportScrollHandler); viewportScrollHandler = null; }
     };
     currentWs.onerror = function() { statusDot.className = 'status-dot disconnected'; };
 
     terminal.onData(function(data) {
-      sendResizeIntent();
-      if (currentWs && currentWs.readyState === WebSocket.OPEN)
-        currentWs.send(JSON.stringify({ type: 'input', data: data }));
+      if (useMobileInputShim) return;
+      data = data.replace(/\x1b\[(?:\?|>)?[0-9;]*c/g, '').replace(/(?:\??|>?)[0-9;]+c/g, '');
+      if (!data) return;
+      var activeDraft = isComposing ? (compositionFilterDraft || compositionDraft) : (recentCompositionFilterDraft || recentCompositionDraft);
+      if (activeDraft && /^[\x00-\x7f]+$/.test(data)) {
+        var draft = activeDraft.replace(/\s+/g, '');
+        var compact = data.replace(/\s+/g, '');
+        if (data === activeDraft || compact === draft || draft.indexOf(compact) === 0 || compact.indexOf(draft) === 0) return;
+      }
+      if (isComposing && /^[\x20-\x7e]+$/.test(data)) return;
+      // xterm emits committed IME candidates here after compositionend. Draft pinyin is
+      // dropped above so it does not leak into the shell as a command.
+      sendTerminalInput(data);
     });
 
     resizeHandler = function() {
@@ -639,21 +1038,58 @@
       viewportHandler = function() {
         var vp = window.visualViewport;
         var page = $('#terminal-page');
-        if (page) page.style.height = vp.height + 'px';
-        document.documentElement.style.setProperty('--vh', vp.height + 'px');
+        var header = page && page.querySelector('.terminal-header');
+        var visibleHeight = Math.max(120, Math.floor(vp.height));
+        var headerHeight = header ? Math.ceil(header.getBoundingClientRect().height) : 0;
+        document.documentElement.style.setProperty('--vh', visibleHeight + 'px');
+        document.documentElement.style.setProperty('--terminal-keyboard-gap', '0px');
+        if (page) {
+          page.style.position = 'fixed';
+          page.style.left = Math.floor(vp.offsetLeft || 0) + 'px';
+          page.style.right = 'auto';
+          page.style.top = Math.floor(vp.offsetTop || 0) + 'px';
+          page.style.width = Math.floor(vp.width || window.innerWidth) + 'px';
+          page.style.height = visibleHeight + 'px';
+          page.style.maxHeight = visibleHeight + 'px';
+          page.style.transform = 'none';
+        }
+        if (container) {
+          container.style.height = Math.max(80, visibleHeight - headerHeight) + 'px';
+          container.style.maxHeight = Math.max(80, visibleHeight - headerHeight) + 'px';
+        }
+        var shim = mobileInputShim;
+        if (shim) {
+          shim.style.position = 'fixed';
+          shim.style.left = '0px';
+          shim.style.top = Math.max(0, visibleHeight + (vp.offsetTop || 0) - 34) + 'px';
+          shim.style.width = '100vw';
+          shim.style.height = '32px';
+        }
         window.scrollTo(0, 0);
         document.body.scrollTop = 0;
         if (fitAddon) {
-          setTimeout(function() {
-            if (!terminalUsesRemoteSize && !waitingForRemoteSize && resizeRole === 'controller') scheduleFitResize();
+          if (viewportFitTimer) clearTimeout(viewportFitTimer);
+          viewportFitTimer = setTimeout(function() {
+            viewportFitTimer = null;
+            if (isComposing) { pendingFitAfterComposition = true; return; }
+            try { if (fitAddon) fitAddon.fit(); } catch(err) {}
+            if (useMobileInputShim) {
+              sendResizeIntent();
+            } else if (!terminalUsesRemoteSize && !waitingForRemoteSize && resizeRole === 'controller') {
+              scheduleFitResize();
+            } else {
+              refreshTerminalView(false, false);
+            }
             if (terminal) terminal.scrollToBottom();
-          }, 50);
+          }, 80);
         }
       };
+      viewportScrollHandler = function() { window.scrollTo(0, 0); if (viewportHandler) viewportHandler(); };
       window.visualViewport.addEventListener('resize', viewportHandler);
-      window.visualViewport.addEventListener('scroll', function() { window.scrollTo(0, 0); });
+      window.visualViewport.addEventListener('scroll', viewportScrollHandler);
       viewportHandler();
     }
+
   }
 
   $('#back-btn').addEventListener('click', function() { cleanupTerminal(); loadSessions(); });
@@ -661,9 +1097,17 @@
   // --- Global viewport fix for mobile keyboards ---
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function() {
+      if (document.querySelector('#terminal-page:not(.hidden) .terminal-mobile-input')) return;
       document.documentElement.style.setProperty('--vh', window.visualViewport.height + 'px');
       document.querySelectorAll('.page:not(.hidden)').forEach(function(p) {
+        p.style.position = '';
+        p.style.left = '';
+        p.style.right = '';
+        p.style.top = '';
+        p.style.width = '';
         p.style.height = window.visualViewport.height + 'px';
+        p.style.maxHeight = window.visualViewport.height + 'px';
+        p.style.transform = '';
       });
       window.scrollTo(0, 0);
     });

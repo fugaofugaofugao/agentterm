@@ -1,6 +1,6 @@
 {
   "name": "@agentterm/electron",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "main": "out/main/index.js",
   "scripts": {
@@ -47,19 +47,22 @@
       "target": [
         "dmg"
       ],
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "portable"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "afterPack": "./scripts/sign-tmux.js"
   },
   "dependencies": {
+    "@agentterm/server": "workspace:*",
     "@agentterm/shared": "workspace:*",
     "node-pty": "^1.1.0",
-    "@agentterm/server": "workspace:*"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

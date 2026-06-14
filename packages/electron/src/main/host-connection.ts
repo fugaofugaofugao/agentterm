@@ -3,8 +3,8 @@ import * as pty from "node-pty"
 import { IPty } from "node-pty"
 import * as os from "os"
 import * as path from "path"
-import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState, configureAgentTermSession } from "@agentterm/shared"
-import { resetSession as resetLocalPtySession, attachSession as attachLocalPtySession, writeToPty as writeToLocalPty, resizePty as resizeLocalPty, scrollPty as scrollLocalPty, addOutputListener as addLocalOutputListener, addExitListener as addLocalExitListener, isAttached as isLocalPtyAttached, getSessionSize as getLocalPtySize } from "./pty-manager"
+import { createSession, getTmuxEnv, getTmuxPath, killSession, resetSessionFresh, scrollSessionPane, exitSessionCopyMode, sessionExists, clearSessionHistory, getSessionScrollState, configureAgentTermSession, captureSessionPane } from "@agentterm/shared"
+import { resetSession as resetLocalPtySession, attachSession as attachLocalPtySession, writeToPty as writeToLocalPty, resizePty as resizeLocalPty, scrollPty as scrollLocalPty, addOutputListener as addLocalOutputListener, addExitListener as addLocalExitListener, isAttached as isLocalPtyAttached, getSessionSize as getLocalPtySize, getPtyScrollState as getLocalPtyScrollState } from "./pty-manager"
 
 const tmuxPath = getTmuxPath()
 
@@ -36,6 +36,7 @@ let syncTimer: ReturnType<typeof setInterval> | null = null
 const relayPtys = new Map<string, IPty>()
 const relayLocalPtys = new Set<string>()
 const relayLocalCleanups = new Map<string, Array<() => void>>()
+const relayScrollStateTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const relaySizes = new Map<string, { cols: number; rows: number }>()
 const suppressRelayExit = new Set<string>()
 const recentRelayInputs = new Map<string, { data: string; at: number }>()
@@ -59,6 +60,18 @@ function syncSessions(): void {
   send({ type: "session-sync", sessions: enriched })
 }
 
+
+function sendRelayPaneSnapshot(sessionName: string): void {
+  if (process.platform === "win32" || relayLocalPtys.has(sessionName)) return
+  try {
+    const captured = captureSessionPane(sessionName, 700)
+    if (captured) {
+      const data = "\x1b[3J\x1b[2J\x1b[H" + captured.split("\n").join("\r\n")
+      send({ type: "relay-output", sessionName, data })
+    }
+  } catch {}
+}
+
 function sendRelayTerminalSize(sessionName: string, passive = true, controllerId?: string, sourceClientId?: string): void {
   const size = getLocalPtySize(sessionName) || relaySizes.get(sessionName) || { cols: 80, rows: 24 }
   send({ type: "terminal-size", sessionName, cols: size.cols, rows: size.rows, revision: (size as any).revision || 0, controllerId, sourceClientId, role: passive ? "observer" : "controller", passive })
@@ -69,6 +82,8 @@ function handleRelayAttach(sessionName: string, cols?: number, rows?: number): v
   relaySizes.set(sessionName, getLocalPtySize(sessionName) || requestedSize)
   if (relayPtys.has(sessionName) || relayLocalPtys.has(sessionName)) {
     if (process.platform === "win32") sendRelayTerminalSize(sessionName, true)
+    else { sendRelayPaneSnapshot(sessionName); setTimeout(() => sendRelayPaneSnapshot(sessionName), 120) }
+    sendRelayScrollState(sessionName)
     return
   }
 
@@ -83,7 +98,10 @@ function handleRelayAttach(sessionName: string, cols?: number, rows?: number): v
       attachLocalPtySession(sessionName, requestedSize.cols, requestedSize.rows, "relay", { resize: !wasAttached })
       sendRelayTerminalSize(sessionName, true)
       const removeOutput = addLocalOutputListener((session, data) => {
-        if (session === sessionName && relayLocalPtys.has(sessionName)) send({ type: "relay-output", sessionName, data })
+        if (session === sessionName && relayLocalPtys.has(sessionName)) {
+          send({ type: "relay-output", sessionName, data })
+          sendRelayScrollState(sessionName)
+        }
       })
       const removeExit = addLocalExitListener((session) => {
         if (session !== sessionName || !relayLocalPtys.has(sessionName)) return
@@ -129,10 +147,15 @@ function handleRelayAttach(sessionName: string, cols?: number, rows?: number): v
   relayPtys.set(sessionName, term)
 
 
+  sendRelayPaneSnapshot(sessionName)
+  setTimeout(() => sendRelayPaneSnapshot(sessionName), 120)
   sendRelayScrollState(sessionName)
 
   term.onData((data: string) => {
-    if (relayPtys.get(sessionName) === term) send({ type: "relay-output", sessionName, data })
+    if (relayPtys.get(sessionName) === term) {
+      send({ type: "relay-output", sessionName, data })
+      scheduleRelayScrollState(sessionName)
+    }
   })
 
   term.onExit(() => {
@@ -144,6 +167,8 @@ function handleRelayAttach(sessionName: string, cols?: number, rows?: number): v
 }
 
 function handleRelayDetach(sessionName: string): void {
+  const pendingRelayTimer = relayScrollStateTimers.get(sessionName)
+  if (pendingRelayTimer) { clearTimeout(pendingRelayTimer); relayScrollStateTimers.delete(sessionName) }
   if (relayLocalPtys.delete(sessionName)) {
     relayLocalCleanups.get(sessionName)?.forEach((cleanup) => cleanup())
     relayLocalCleanups.delete(sessionName)
@@ -160,7 +185,18 @@ function handleRelayDetach(sessionName: string): void {
 function shouldDropDuplicateInput(map: Map<string, { data: string; at: number }>, sessionName: string, data: string): boolean { return false }
 
 function sendRelayScrollState(sessionName: string): void {
-  send({ type: "relay-scroll-state", sessionName, ...getSessionScrollState(sessionName) })
+  const state = relayLocalPtys.has(sessionName) ? getLocalPtyScrollState(sessionName) : getSessionScrollState(sessionName)
+  send({ type: "relay-scroll-state", sessionName, scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode })
+}
+
+function scheduleRelayScrollState(sessionName: string): void {
+  if (process.platform === "win32" || relayLocalPtys.has(sessionName)) return
+  if (relayScrollStateTimers.has(sessionName)) return
+  const timer = setTimeout(() => {
+    relayScrollStateTimers.delete(sessionName)
+    if (relayPtys.has(sessionName)) sendRelayScrollState(sessionName)
+  }, 80)
+  relayScrollStateTimers.set(sessionName, timer)
 }
 
 function handleRelayInput(sessionName: string, data: string): void {
@@ -168,6 +204,7 @@ function handleRelayInput(sessionName: string, data: string): void {
   if (process.platform !== "win32" && relayPtys.has(sessionName)) exitSessionCopyMode(sessionName)
   relayPtys.get(sessionName)?.write(data)
   sendRelayScrollState(sessionName)
+  setTimeout(() => sendRelayPaneSnapshot(sessionName), 80)
 }
 
 function handleRelayResizeIntent(sessionName: string, cols: number, rows: number, clientId?: string): void {
@@ -189,9 +226,10 @@ function handleRelayResize(sessionName: string, cols: number, rows: number, clie
 }
 
 function handleRelayScroll(sessionName: string, lines: number): void {
-  if (relayLocalPtys.has(sessionName)) { scrollLocalPty(sessionName, lines); return }
+  if (relayLocalPtys.has(sessionName)) { scrollLocalPty(sessionName, lines); sendRelayScrollState(sessionName); return }
   if (relayPtys.has(sessionName)) {
     scrollSessionPane(sessionName, lines)
+    sendRelayPaneSnapshot(sessionName)
     sendRelayScrollState(sessionName)
   }
 }
