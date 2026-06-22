@@ -420,6 +420,7 @@
     var touchScrolling = false;
     var accumulated = 0;
     var pendingLines = 0;
+    var pendingRemote = false;
     var scrollFrame = 0;
     var remoteScrollTimer = null;
     var wheelAccumulator = { value: 0 };
@@ -429,13 +430,23 @@
     var scrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false };
     var scrollHandle = null;
     var scrollThumb = null;
-    function usesTmuxScroll() { return !!remotePane || scrollState.paneHeight > 0; }
+    function hasTmuxScroll() { return !scrollState.nativeScrollback && (!!remotePane || scrollState.paneHeight > 0); }
     function getLocalScrollState() {
       if (!terminal || !terminal.buffer || !terminal.buffer.active) return { scrollPosition: 0, historySize: 0, paneHeight: 0 };
       var buffer = terminal.buffer.active;
       var historySize = Math.max(0, buffer.baseY || 0);
       var scrollPosition = Math.max(0, (buffer.baseY || 0) - (buffer.viewportY || 0));
       return { scrollPosition: scrollPosition, historySize: historySize, paneHeight: terminal.rows || 0 };
+    }
+    function usesTmuxScroll() { return hasTmuxScroll() && (!!remotePane || !!scrollState.inCopyMode || scrollState.scrollPosition > 0); }
+    function shouldUseTmuxScroll(lines) {
+      if (!hasTmuxScroll()) return false;
+      if (remotePane || scrollState.inCopyMode || scrollState.scrollPosition > 0) return true;
+      if (lines < 0) {
+        var local = getLocalScrollState();
+        return local.scrollPosition >= local.historySize;
+      }
+      return false;
     }
     function getEffectiveScrollState() { return usesTmuxScroll() ? scrollState : getLocalScrollState(); }
     function updateScrollThumb() {
@@ -453,6 +464,7 @@
       scrollState.historySize = Number(state.historySize || 0);
       scrollState.paneHeight = Number(state.paneHeight || 0);
       scrollState.inCopyMode = !!state.inCopyMode;
+      scrollState.nativeScrollback = !!state.nativeScrollback;
       updateScrollThumb();
     };
     var targets = [termElement];
@@ -472,7 +484,7 @@
       scrollFrame = 0;
       if (remoteScrollTimer) { clearTimeout(remoteScrollTimer); remoteScrollTimer = null; }
       if (!pendingLines) return;
-      var remote = usesTmuxScroll();
+      var remote = pendingRemote && hasTmuxScroll();
       var maxLines = remote ? 36 : 120;
       var lines = Math.max(-maxLines, Math.min(maxLines, pendingLines));
       pendingLines -= lines;
@@ -482,16 +494,19 @@
     }
 
     function scheduleScrollFlush() {
-      if (usesTmuxScroll()) {
+      if (pendingRemote && hasTmuxScroll()) {
         if (!remoteScrollTimer) remoteScrollTimer = setTimeout(flushScroll, REMOTE_FLUSH_MS);
       } else if (!scrollFrame) {
         scrollFrame = requestAnimationFrame(flushScroll);
       }
     }
 
-    function queueScroll(lines) {
+    function queueScroll(lines, remote) {
       if (!isFinite(lines) || !lines) return;
-      if (usesTmuxScroll()) {
+      remote = remote == null ? shouldUseTmuxScroll(lines) : !!remote;
+      if (pendingLines && pendingRemote !== remote) flushScroll();
+      pendingRemote = remote;
+      if (remote) {
         scrollState.scrollPosition = Math.max(0, Math.min(Math.max(scrollState.historySize, scrollState.scrollPosition), scrollState.scrollPosition - lines));
         updateScrollThumb();
       }
@@ -507,7 +522,7 @@
       var linePx = usesTmuxScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX;
       var rawLines = normalizeWheelDeltaToLines(e, linePx, (terminal && terminal.rows) || 24);
       var lines = takeWholeAccumulatedScroll(wheelAccumulator, rawLines, 24);
-      if (lines) queueScroll(lines);
+      if (lines) queueScroll(lines, shouldUseTmuxScroll(lines));
     }
 
     function isTextInputTarget(target) {
@@ -540,7 +555,8 @@
       accumulated += dy;
       var linePx = usesTmuxScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX;
       while (Math.abs(accumulated) >= linePx) {
-        queueScroll(accumulated > 0 ? 1 : -1);
+        var lines = accumulated > 0 ? 1 : -1;
+        queueScroll(lines, shouldUseTmuxScroll(lines));
         accumulated += accumulated > 0 ? -linePx : linePx;
       }
     }

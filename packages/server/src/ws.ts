@@ -8,7 +8,7 @@ const relayViewers = new Map<string, Set<WebSocket>>();
 const localViewers = new Map<string, Set<WebSocket>>();
 const recentlyViewed = new Map<string, number>();
 const relayOutputHistory = new Map<string, string[]>();
-const relayScrollStates = new Map<string, { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean }>();
+const relayScrollStates = new Map<string, { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean; nativeScrollback?: boolean }>();
 const MAX_RELAY_HISTORY_CHUNKS = 2000;
 const MAX_RELAY_HISTORY_CHARS = 2_000_000;
 const RECENT_VIEW_TTL_MS = 15000;
@@ -115,6 +115,7 @@ function replayRelayState(ws: WebSocket, relayKey: string): void {
       historySize: state.historySize,
       paneHeight: state.paneHeight,
       inCopyMode: state.inCopyMode,
+      nativeScrollback: (state as any).nativeScrollback,
       type: "scroll-state",
     }));
   }
@@ -494,9 +495,9 @@ export function handleRelayClear(deviceId: string, sessionName: string): void {
   for (const ws of viewers) sendClear(ws);
 }
 
-export function handleRelayScrollState(deviceId: string, sessionName: string, state: { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean }): void {
+export function handleRelayScrollState(deviceId: string, sessionName: string, state: { scrollPosition?: number; historySize?: number; paneHeight?: number; inCopyMode?: boolean; nativeScrollback?: boolean }): void {
   const relayKey = `${deviceId}:${sessionName}`;
-  relayScrollStates.set(relayKey, { scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode });
+  relayScrollStates.set(relayKey, { scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode, nativeScrollback: state.nativeScrollback });
   const viewers = relayViewers.get(relayKey);
   if (!viewers) return;
   const msg = encodeMessage({
@@ -504,6 +505,7 @@ export function handleRelayScrollState(deviceId: string, sessionName: string, st
     historySize: state.historySize,
     paneHeight: state.paneHeight,
     inCopyMode: state.inCopyMode,
+    nativeScrollback: (state as any).nativeScrollback,
     type: "scroll-state",
   });
   for (const ws of viewers) {

@@ -3,6 +3,7 @@ export interface TerminalScrollState {
   historySize: number
   paneHeight: number
   inCopyMode?: boolean
+  nativeScrollback?: boolean
 }
 
 export interface ScrollThumbLayout {

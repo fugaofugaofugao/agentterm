@@ -82,13 +82,9 @@ function getWindowsHistoryLines(sessionName: string): string[] {
   return text.split("\n")
 }
 
-export function getPtyScrollState(sessionName: string): { scrollPosition: number; historySize: number; paneHeight: number; inCopyMode: boolean } {
+export function getPtyScrollState(sessionName: string): { scrollPosition: number; historySize: number; paneHeight: number; inCopyMode: boolean; nativeScrollback?: boolean } {
   if (process.platform !== "win32") return getSessionScrollState(sessionName) as any
-  const rows = sessionSizes.get(sessionName)?.rows || 24
-  const lines = getWindowsHistoryLines(sessionName)
-  const historySize = Math.max(0, lines.length - rows)
-  const scrollPosition = Math.max(0, Math.min(historySize, windowsViewportOffsets.get(sessionName) || 0))
-  return { scrollPosition, historySize, paneHeight: rows, inCopyMode: false }
+  return { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false, nativeScrollback: true }
 }
 
 function renderWindowsViewport(sessionName: string): string {
@@ -235,7 +231,9 @@ export function attachSession(sessionName: string, cols = 80, rows = 24, owner =
   }
 }
 export function detachSession(sessionName: string, owner = "default"): void {
-  if (removeSessionOwner(sessionName, owner) > 0) return
+  const remainingOwners = removeSessionOwner(sessionName, owner)
+  if (remainingOwners > 0) return
+  if (process.platform === "win32") return
   forceDetachSession(sessionName)
 }
 
@@ -285,11 +283,6 @@ export function getSessionSize(sessionName: string): { cols: number; rows: numbe
 export function scrollPty(sessionName: string, lines: number): void {
   if (!sessions.has(sessionName)) return
   if (process.platform === "win32") {
-    const current = windowsViewportOffsets.get(sessionName) || 0
-    const state = getPtyScrollState(sessionName)
-    const next = Math.max(0, Math.min(state.historySize, current - Math.trunc(lines || 0)))
-    windowsViewportOffsets.set(sessionName, next)
-    emitOutput(sessionName, renderWindowsViewport(sessionName))
     onScrollState(sessionName, getPtyScrollState(sessionName))
     return
   }

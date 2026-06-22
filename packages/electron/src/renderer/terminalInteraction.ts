@@ -43,6 +43,7 @@ export function attachTerminalInteractionController(options: TerminalInteraction
   const scrollState: TerminalScrollState = { scrollPosition: 0, historySize: 0, paneHeight: 0, inCopyMode: false }
   const wheelAccumulator = new ScrollAccumulator()
   let pendingScrollLines = 0
+  let pendingScrollRemote = false
   let scrollFrame = 0
   let remoteScrollTimer: ReturnType<typeof setTimeout> | null = null
   let touchStartY = 0
@@ -211,10 +212,20 @@ export function attachTerminalInteractionController(options: TerminalInteraction
 
   setComposingState(false)
 
-  const usesRemoteScroll = () => remotePane || scrollState.paneHeight > 0
+  const hasRemoteScroll = () => !scrollState.nativeScrollback && (remotePane || scrollState.paneHeight > 0)
   const getLocalState = (): TerminalScrollState => {
     const buffer = terminal.buffer.active
     return { scrollPosition: Math.max(0, buffer.baseY - buffer.viewportY), historySize: Math.max(0, buffer.baseY), paneHeight: terminal.rows, inCopyMode: false }
+  }
+  const usesRemoteScroll = () => hasRemoteScroll() && (remotePane || !!scrollState.inCopyMode || scrollState.scrollPosition > 0)
+  const shouldUseRemoteScroll = (lines: number) => {
+    if (!hasRemoteScroll()) return false
+    if (remotePane || scrollState.inCopyMode || scrollState.scrollPosition > 0) return true
+    if (lines < 0) {
+      const local = getLocalState()
+      return local.scrollPosition >= local.historySize
+    }
+    return false
   }
   const getEffectiveState = () => usesRemoteScroll() ? scrollState : getLocalState()
   const updateScrollThumb = () => {
@@ -229,7 +240,7 @@ export function attachTerminalInteractionController(options: TerminalInteraction
     scrollFrame = 0
     if (remoteScrollTimer) { clearTimeout(remoteScrollTimer); remoteScrollTimer = null }
     if (!pendingScrollLines) return
-    const remote = usesRemoteScroll()
+    const remote = pendingScrollRemote && hasRemoteScroll()
     const lines = clamp(pendingScrollLines, remote ? -36 : -120, remote ? 36 : 120)
     pendingScrollLines -= lines
     if (remote) sendScroll(lines)
@@ -237,15 +248,17 @@ export function attachTerminalInteractionController(options: TerminalInteraction
     if (pendingScrollLines) scheduleScrollFlush()
   }
   const scheduleScrollFlush = () => {
-    if (usesRemoteScroll()) {
+    if (pendingScrollRemote && hasRemoteScroll()) {
       if (!remoteScrollTimer) remoteScrollTimer = setTimeout(flushScroll, REMOTE_FLUSH_MS)
     } else if (!scrollFrame) {
       scrollFrame = requestAnimationFrame(flushScroll)
     }
   }
-  const queueScroll = (lines: number) => {
+  const queueScroll = (lines: number, remote = shouldUseRemoteScroll(lines)) => {
     if (!Number.isFinite(lines) || !lines) return
-    if (usesRemoteScroll()) {
+    if (pendingScrollLines && pendingScrollRemote !== remote) flushScroll()
+    pendingScrollRemote = remote
+    if (remote) {
       scrollState.scrollPosition = Math.max(0, Math.min(Math.max(scrollState.historySize, scrollState.scrollPosition), scrollState.scrollPosition - lines))
       updateScrollThumb()
     }
@@ -265,7 +278,7 @@ export function attachTerminalInteractionController(options: TerminalInteraction
     const linePx = usesRemoteScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX
     const rawLines = normalizeWheelDeltaToLines({ deltaX: event.deltaX, deltaY: event.deltaY, wheelDelta: (event as any).wheelDelta, deltaMode: event.deltaMode, linePx, pageRows: terminal.rows || 24 })
     const lines = wheelAccumulator.takeWholeLines(rawLines, 24)
-    if (lines) queueScroll(lines)
+    if (lines) queueScroll(lines, shouldUseRemoteScroll(lines))
   }
   const handleTouchStart = (event: TouchEvent) => {
     if (event.touches.length === 1) { touchStartY = event.touches[0].clientY; accumulatedTouch = 0 }
@@ -278,7 +291,8 @@ export function attachTerminalInteractionController(options: TerminalInteraction
     accumulatedTouch += dy
     const linePx = usesRemoteScroll() ? REMOTE_LINE_PX : LOCAL_LINE_PX
     while (Math.abs(accumulatedTouch) >= linePx) {
-      queueScroll(accumulatedTouch > 0 ? 1 : -1)
+      const lines = accumulatedTouch > 0 ? 1 : -1
+      queueScroll(lines, shouldUseRemoteScroll(lines))
       accumulatedTouch += accumulatedTouch > 0 ? -linePx : linePx
     }
   }
@@ -318,6 +332,8 @@ export function attachTerminalInteractionController(options: TerminalInteraction
     window.addEventListener("pointerup", handleScrollPointerUp, { once: true })
   }
 
+  const scrollDisposable = terminal.onScroll(() => updateScrollThumb())
+
   const inputDisposable = terminal.onData((data) => {
     const outgoing = filterTerminalInput(data, isComposing ? (compositionFilterDraft || compositionDraft) : (recentCompositionFilterDraft || recentCompositionDraft))
     if (!outgoing) return
@@ -345,6 +361,7 @@ export function attachTerminalInteractionController(options: TerminalInteraction
       scrollState.historySize = Number(state.historySize || 0)
       scrollState.paneHeight = Number(state.paneHeight || 0)
       scrollState.inCopyMode = !!state.inCopyMode
+      scrollState.nativeScrollback = !!state.nativeScrollback
       updateScrollThumb()
     },
     dispose() {
@@ -365,6 +382,7 @@ export function attachTerminalInteractionController(options: TerminalInteraction
         target.removeEventListener("touchmove", handleTouchMove, { capture: true } as any)
       })
       inputDisposable.dispose()
+      scrollDisposable.dispose()
     },
   }
 }

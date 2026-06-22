@@ -186,7 +186,7 @@ function shouldDropDuplicateInput(map: Map<string, { data: string; at: number }>
 
 function sendRelayScrollState(sessionName: string): void {
   const state = relayLocalPtys.has(sessionName) ? getLocalPtyScrollState(sessionName) : getSessionScrollState(sessionName)
-  send({ type: "relay-scroll-state", sessionName, scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode })
+  send({ type: "relay-scroll-state", sessionName, scrollPosition: state.scrollPosition, historySize: state.historySize, paneHeight: state.paneHeight, inCopyMode: state.inCopyMode, nativeScrollback: (state as any).nativeScrollback })
 }
 
 function scheduleRelayScrollState(sessionName: string): void {

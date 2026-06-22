@@ -138,11 +138,13 @@ html, body, #root {
 /* Terminal */
 .terminal-container { -webkit-app-region: no-drag; flex: 1; display: flex; overflow: hidden; min-height: 0; min-width: 0; }
 .terminal-shell { flex: 1; min-height: 0; min-width: 0; max-width: 100%; position: relative; display: flex; overflow: visible; background: #1a1a2e; }
-.terminal { flex: 1; padding: 4px 14px 4px 4px; min-height: 0; min-width: 0; max-width: 100%; overflow: visible; background: #1a1a2e; position: relative; }
+.terminal { flex: 1; padding: 6px 14px 6px 10px; min-height: 0; min-width: 0; max-width: 100%; overflow: visible; background: #1a1a2e; position: relative; }
 .terminal .xterm { height: 100%; width: 100%; max-width: 100%; overflow: hidden; background: #1a1a2e; transition: height 0.08s ease; }
-.terminal .xterm-screen { max-width: 100%; overflow: hidden; background: #1a1a2e; will-change: transform; }
-.terminal .xterm-rows { max-width: 100%; }
-.terminal .xterm-viewport { overflow-y: auto !important; overflow-x: hidden !important; -webkit-overflow-scrolling: touch; }
+.terminal .xterm-screen { max-width: 100%; overflow: visible; background: #1a1a2e; will-change: transform; }
+.terminal .xterm-rows { max-width: 100%; padding-left: 2px; }
+.terminal .xterm-helpers { margin-left: 2px; }
+.terminal .xterm-viewport { overflow-y: auto !important; overflow-x: hidden !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; }
+.terminal .xterm-viewport::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
 .terminal .xterm-helpers { overflow: visible !important; }
 .terminal .xterm-helper-textarea { padding: 0 !important; border: 0 !important; margin: 0 !important; opacity: 0 !important; white-space: nowrap !important; overflow: hidden !important; resize: none !important; transform: none !important; }
 .terminal .composition-view, .terminal .xterm-composition-view { color: #e0e0e0 !important; background: #1a1a2e !important; pointer-events: none !important; text-shadow: none !important; border: 0 !important; text-decoration: underline !important; text-decoration-thickness: 1px !important; text-underline-offset: 2px !important; }

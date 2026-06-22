@@ -108,6 +108,7 @@ export interface WsMessage {
   historySize?: number;
   paneHeight?: number;
   inCopyMode?: boolean;
+  nativeScrollback?: boolean;
   passive?: boolean;
   role?: "controller" | "observer";
   clientId?: string;

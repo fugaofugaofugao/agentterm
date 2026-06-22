@@ -141,9 +141,11 @@ body {
 
 #terminal-container { flex: 1; background: var(--bg); overflow: hidden; position: relative; min-width: 0; max-width: 100%; }
 #terminal-container .xterm { height: 100%; width: 100%; max-width: 100%; padding: 2px 14px 2px 2px; overflow: hidden; background: var(--bg); }
-#terminal-container .xterm-screen { max-width: 100%; overflow: hidden; background: var(--bg); will-change: transform; }
-#terminal-container .xterm-rows { max-width: 100%; }
-#terminal-container .xterm-viewport { overflow-y: auto !important; overflow-x: hidden !important; -webkit-overflow-scrolling: touch; }
+#terminal-container .xterm-screen { max-width: 100%; overflow: visible; background: var(--bg); will-change: transform; }
+#terminal-container .xterm-rows { max-width: 100%; padding-left: 2px; }
+#terminal-container .xterm-helpers { margin-left: 2px; }
+#terminal-container .xterm-viewport { overflow-y: auto !important; overflow-x: hidden !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; -ms-overflow-style: none; }
+#terminal-container .xterm-viewport::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
 #terminal-container .xterm-helpers { overflow: visible !important; }
 #terminal-container .xterm-helper-textarea { padding: 0 !important; border: 0 !important; margin: 0 !important; opacity: 0 !important; white-space: nowrap !important; overflow: hidden !important; resize: none !important; transform: none !important; }
 #terminal-container .composition-view, #terminal-container .xterm-composition-view { color: #e0e0e0 !important; background: var(--bg) !important; pointer-events: none !important; text-shadow: none !important; border: 0 !important; text-decoration: underline !important; text-decoration-thickness: 1px !important; text-underline-offset: 2px !important; }
